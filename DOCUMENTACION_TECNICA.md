@@ -157,12 +157,11 @@ Evalúa si un sensor puede analizarse y si presenta problemas temporales.
 
 La frecuencia típica se estima como:
 
-$$
-f_s = \frac{1}{\operatorname{mediana}(\Delta t_i)}
-$$
+```math
+f_s = \frac{1}{\mathrm{mediana}(\Delta t_i)}
+```
 
-Se usa mediana y no media porque un corte grande alteraría fuertemente el promedio.
-
+Se usa la mediana y no la media porque un corte grande alteraría fuertemente el promedio.
 Un intervalo se considera corte cuando:
 
 $$
