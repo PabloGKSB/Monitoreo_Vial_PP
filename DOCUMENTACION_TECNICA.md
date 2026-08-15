@@ -298,7 +298,7 @@ Esto evita que un único valor extremo domine todo el score.
 Después se calculan mediana y desviación absoluta mediana:
 
 $$
-MAD=\operatorname{mediana}(|u_i-\operatorname{mediana}(u)|)
+MAD = \mathrm{mediana}\left(\left|u_i - \mathrm{mediana}(u)\right|\right)
 $$
 
 La escala robusta es:
@@ -316,7 +316,7 @@ $$
 El z-score positivo queda:
 
 $$
-z_k^+=\max\left(0,\frac{u_k-\operatorname{mediana}(u_k)}{s_k}\right)
+z_k^+ = \max\left(0,\frac{u_k-\mathrm{mediana}(u_k)}{s_k}\right)
 $$
 
 El score combinado es:
