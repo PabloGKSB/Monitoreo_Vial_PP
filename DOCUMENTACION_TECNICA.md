@@ -165,11 +165,10 @@ Se usa la mediana y no la media porque un corte grande alteraría fuertemente el
 Un intervalo se considera corte cuando:
 
 $$
-\Delta t_i > \max(T_{mínimo},\; k\,\operatorname{mediana}(\Delta t))
+\Delta t_i > \max(T_{\mathrm{min}},\; k\,\mathrm{mediana}(\Delta t))
 $$
 
-En el V0, $T_{mínimo}=1$ segundo y $k=8$. Esto es una regla adaptativa, pero sus valores todavía deben validarse.
-
+En el V0, $T_{\mathrm{min}}=1$ segundo y $k=8$. Esto es una regla adaptativa, pero sus valores todavía deben validarse.
 Para GPS se revisan coordenadas ausentes o fuera de rango, precisión horizontal, velocidades negativas y cantidad de observaciones.
 
 Estados:
