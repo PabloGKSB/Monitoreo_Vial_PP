@@ -38,7 +38,7 @@ Cada analisis genera:
 - `outputs/events/<trip_id>_eventos.csv`: copia identificada por recorrido.
 - `outputs/reports/<trip_id>_segmentos.csv`: agregacion espacial experimental.
 - `outputs/reports/<trip_id>_analisis.json`: calidad, resumen, preprocesamiento y parametros exactos.
-- `outputs/maps/<trip_id>.html`: mapa autocontenido basado en OpenStreetMap/CartoDB, sin API comercial.
+- `outputs/maps/<trip_id>.html`: mapa HTML interactivo basado en OpenStreetMap, sin clave de API comercial.
 
 ## Arquitectura
 

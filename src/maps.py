@@ -18,9 +18,9 @@ def build_trip_map(result: AnalysisResult) -> folium.Map:
 
     gps = result.gps.dropna(subset=["latitude", "longitude"])
     if gps.empty:
-        return folium.Map(location=[-33.45, -70.66], zoom_start=5, tiles="CartoDB positron")
+        return folium.Map(location=[-33.45, -70.66], zoom_start=5, tiles="OpenStreetMap")
     center = [float(gps["latitude"].median()), float(gps["longitude"].median())]
-    trip_map = folium.Map(location=center, zoom_start=14, tiles="CartoDB positron", control_scale=True)
+    trip_map = folium.Map(location=center, zoom_start=14, tiles="OpenStreetMap", control_scale=True)
     route_layer = folium.FeatureGroup(name="Trayectoria GPS", show=True)
     folium.PolyLine(
         gps[["latitude", "longitude"]].values.tolist(), color="#315d86", weight=3, opacity=0.65
@@ -59,4 +59,3 @@ def save_trip_map(result: AnalysisResult, path: str | Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     build_trip_map(result).save(str(destination))
     return destination
-

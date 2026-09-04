@@ -6,6 +6,7 @@ import pandas as pd
 from src.analyzer import TripAnalyzer
 from src.annotations import compare_annotations
 from src.config import AnalysisConfig
+from src.maps import build_trip_map
 
 
 def _trip_zip(path):
@@ -38,6 +39,9 @@ def test_analyzer_end_to_end_and_export(tmp_path):
     assert len(result.segments) > 0
     assert result.events.iloc[0]["gps_status"] == "OK"
     assert all(output.exists() for output in outputs.values())
+    map_html = build_trip_map(result).get_root().render().lower()
+    assert "openstreetmap.org" in map_html
+    assert "cartodb" not in map_html
 
 
 def test_manual_annotation_matches_nearby_event():
