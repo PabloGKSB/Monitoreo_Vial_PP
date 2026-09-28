@@ -1,0 +1,149 @@
+*** Begin Patch
+*** Update File: app/src/main/java/com/monitoreovial/anotador/ui/MonitoringApp.kt
+@@
+ import android.content.ClipData
++import android.Manifest
++import android.net.Uri
++import androidx.activity.compose.rememberLauncherForActivityResult
++import androidx.activity.result.contract.ActivityResultContracts
+@@
+ import com.monitoreovial.anotador.capture.CaptureState
++import com.monitoreovial.anotador.capture.GpsAccess
++import com.monitoreovial.anotador.capture.CaptureSchema
+@@
+     var overlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
++    var gpsEnabled by rememberSaveable { mutableStateOf(GpsAccess.requested(context)) }
++    var gpsReadiness by remember { mutableStateOf(GpsAccess.readiness(context)) }
++    var pendingGpsStart by rememberSaveable { mutableStateOf(false) }
++    var gpsWarning by rememberSaveable { mutableStateOf<String?>(null) }
+@@
+-        listOf("Acelerómetro" to Sensor.TYPE_ACCELEROMETER, "Giroscopio" to Sensor.TYPE_GYROSCOPE).map { (name, type) ->
++        listOf("Acelerómetro" to Sensor.TYPE_ACCELEROMETER, "Giroscopio" to Sensor.TYPE_GYROSCOPE,
++            "Gravedad" to Sensor.TYPE_GRAVITY, "Aceleración lineal" to Sensor.TYPE_LINEAR_ACCELERATION,
++            "Vector de rotación" to Sensor.TYPE_ROTATION_VECTOR).map { (name, type) ->
+@@
+                 overlayPermission = Settings.canDrawOverlays(context)
++                gpsReadiness = GpsAccess.readiness(context)
+@@
+     val selected = history.firstOrNull { it.file.absolutePath == selectedPath }
++    fun startCapture(includeGps: Boolean) {
++        if (SesionActual.activa || CaptureState.snapshot.busy || CaptureState.exporting) return
++        actionError = null
++        if (SesionActual.finalizada) limpiarParaNuevoRecorrido()
++        if (!iniciarNuevaSesion(context, SesionActual.nombreBase, gpsRequested = includeGps)) actionError = "No se pudo iniciar el recorrido"
++        else if (overlay && Settings.canDrawOverlays(context)) iniciarOverlayService(context)
++    }
++    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
++        gpsReadiness = GpsAccess.readiness(context)
++        if (pendingGpsStart) scope.launch {
++            while (!CaptureState.uiVisible) delay(100)
++            if (pendingGpsStart) {
++                pendingGpsStart = false
++                gpsReadiness = GpsAccess.readiness(context)
++                if (gpsReadiness == "Disponible") startCapture(true) else gpsWarning = gpsReadiness
++            }
++        }
++    }
++    fun requestStart() {
++        gpsReadiness = GpsAccess.readiness(context)
++        when {
++            !gpsEnabled -> startCapture(false)
++            !GpsAccess.precise(context) -> {
++                pendingGpsStart = true
++                locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
++            }
++            gpsReadiness != "Disponible" -> gpsWarning = gpsReadiness
++            else -> startCapture(true)
++        }
++    }
+@@
+-                                SensorRow("GPS", "Sin integrar", Amber)
++                                SensorRow("GPS", if (gpsEnabled) gpsReadiness else "Deshabilitado", if (gpsEnabled && gpsReadiness == "Disponible") Good else Amber)
+@@
+-                            item { Button(enabled = SesionActual.nombreBase.isNotBlank() && sensors.first().available && !CaptureState.exporting,
++                            item { Button(enabled = SesionActual.nombreBase.isNotBlank() && sensors.first().available && !CaptureState.exporting && !pendingGpsStart,
+@@
+-                                    actionError = null
+-                                    if (SesionActual.finalizada) limpiarParaNuevoRecorrido()
+-                                    if (!iniciarNuevaSesion(context, SesionActual.nombreBase)) actionError = "No se pudo iniciar el recorrido"
+-                                    else if (overlay && Settings.canDrawOverlays(context)) iniciarOverlayService(context)
++                                    requestStart()
+@@
+-                        item { SensorRow("GPS", "Sin integrar", Amber) }
++                        item { SettingSwitch("Registrar GPS", gpsEnabled, enabled = !active && !capture.busy && !pendingGpsStart) {
++                            gpsEnabled = it; prefs.edit().putBoolean("gps", it).apply()
++                        } }
++                        item { SensorRow("GPS", if (gpsEnabled) gpsReadiness else "Deshabilitado", if (gpsEnabled && gpsReadiness == "Disponible") Good else Amber)
++                            Text("Intervalo solicitado: 1 s", style = MaterialTheme.typography.bodySmall)
++                            if (gpsEnabled) TextButton(onClick = {
++                                if (!GpsAccess.precise(context)) locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
++                                else context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
++                            }, enabled = !active && !capture.busy) { Text("Permisos y ubicación") }
++                        }
+@@
+-                            Text("Formato IMU: imu-preview-1", style = MaterialTheme.typography.bodyMedium)
++                            Text("Formato: ${CaptureSchema.VERSION}", style = MaterialTheme.typography.bodyMedium)
+@@
+         if (annotating && active) {
+@@
+         if (confirmingStop && active) AlertDialog(onDismissRequest = { confirmingStop = false },
+@@
+             }) { Text("Finalizar") } }, dismissButton = { TextButton(onClick = { confirmingStop = false }) { Text("Continuar") } })
++        gpsWarning?.let { warning -> AlertDialog(onDismissRequest = { gpsWarning = null },
++            title = { Text("GPS no disponible") }, text = { Text("$warning. Puedes revisar la ubicación o continuar solo con sensores.") },
++            confirmButton = { TextButton(onClick = { gpsWarning = null; startCapture(false) }) { Text("Continuar sin GPS") } },
++            dismissButton = { TextButton(onClick = {
++                gpsWarning = null
++                if (!GpsAccess.precise(context)) context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
++                else context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
++            }) { Text("Revisar ajustes") } }) }
+@@
+-        SensorRow("GPS", "Sin integrar", Amber)
++        listOf("gravity" to "Gravedad", "linear_acceleration" to "Aceleración lineal", "rotation_vector" to "Vector de rotación").forEach { (key, label) ->
++            val stats = s.streams[key]
++            val status = s.sensorStates[key]
++            SensorRow(label, if (stats != null && stats.count > 0) "${stats.count} muestras · ${hz(stats.hz)} Hz" else status ?: "Sin datos",
++                if ((stats?.count ?: 0) > 0) Good else Amber)
++        }
++        SensorRow("GPS", s.gpsState, if (s.gpsState == "Recibiendo GPS") Good else Amber)
++        Text("${s.streams["gps"]?.count ?: 0} fijaciones guardadas", style = MaterialTheme.typography.bodySmall)
++        s.gpsAgeSeconds?.let { age ->
++            Text("Última fijación: hace ${hz(age)} s · Precisión: ${s.gpsAccuracyM?.let { hz(it.toDouble()) + " m" } ?: "no informada"}", style = MaterialTheme.typography.bodySmall)
++            s.gpsSpeedMps?.let { Text("Última velocidad GPS: ${hz(it * 3.6)} km/h", style = MaterialTheme.typography.bodySmall) }
++        }
+@@
+-@Composable private fun SettingSwitch(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
++@Composable private fun SettingSwitch(title: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+@@
+-        Text(title, Modifier.weight(1f)); Switch(checked, onChange)
++        Text(title, Modifier.weight(1f)); Switch(checked, onChange, enabled = enabled)
+@@
+-                listOf("accelerometer" to "Acelerómetro", "gyroscope" to "Giroscopio").forEach { (key, label) ->
++                listOf("accelerometer" to "Acelerómetro", "gyroscope" to "Giroscopio", "gravity" to "Gravedad",
++                    "linear_acceleration" to "Aceleración lineal", "rotation_vector" to "Vector de rotación", "gps" to "GPS").forEach { (key, label) ->
+@@
+                 if (!m.isNull("error") && m.optString("error").isNotBlank()) Text(m.optString("error"), color = MaterialTheme.colorScheme.error)
++                m.optJSONArray("quality_warnings")?.let { warnings ->
++                    for (i in 0 until warnings.length()) Text(warnings.getString(i), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
++                }
++                if (m.has("gps_final_state")) Text("GPS al cierre: ${m.optString("gps_final_state")}", style = MaterialTheme.typography.bodySmall)
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/CapturePanel.kt
+@@
+-        Text(s.phase + " (sin GPS)", fontSize = 13.sp)
++        Text(s.phase, fontSize = 13.sp)
++        Text("GPS: ${s.gpsState}", fontSize = 12.sp)
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/CaptureState.kt
+@@
+-        snapshot = CaptureSnapshot(phase = "Preparando IMU", busy = true)
++        snapshot = CaptureSnapshot(phase = "Preparando sensores", busy = true)
+@@
+-        if (snapshot.busy) snapshot = snapshot.copy(phase = "Guardando IMU")
++        if (snapshot.busy) snapshot = snapshot.copy(phase = "Guardando sensores")
+*** Update File: app/src/main/res/xml/data_extraction_rules.xml
+@@
+-</data-extraction-rules>
++    <device-transfer>
++        <exclude domain="external" path="Documents/" />
++    </device-transfer>
++</data-extraction-rules>
+*** End Patch

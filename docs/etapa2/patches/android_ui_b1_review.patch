@@ -1,0 +1,87 @@
+*** Begin Patch
+*** Update File: app/src/main/java/com/monitoreovial/anotador/ui/MonitoringApp.kt
+@@
+ import androidx.compose.foundation.background
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
+@@
+ import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.CancellationException
+@@
+-        } catch (error: Exception) { loadError = error.message ?: "No se pudo cargar el historial" }
++        } catch (cancelled: CancellationException) { throw cancelled }
++        catch (error: Exception) { loadError = error.message ?: "No se pudo cargar el historial" }
+@@
+-            } catch (error: Exception) { actionError = error.message ?: "No se pudo exportar" }
++            } catch (cancelled: CancellationException) { throw cancelled }
++            catch (error: Exception) { actionError = error.message ?: "No se pudo exportar" }
+@@
+-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
++                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+@@
+-                            pair.forEach { event -> OutlinedButton(modifier = Modifier.weight(1f).heightIn(min = 64.dp), onClick = {
++                            pair.forEach { event -> OutlinedButton(modifier = Modifier.weight(1f).heightIn(min = 72.dp),
++                                colors = ButtonDefaults.outlinedButtonColors(contentColor = when (event) {
++                                    "BACHE" -> MaterialTheme.colorScheme.error
++                                    "LOMO_DE_TORO" -> if (dark) Color(0xFFFFD27E) else Amber
++                                    "CAMINO_MALO" -> MaterialTheme.colorScheme.secondary
++                                    else -> MaterialTheme.colorScheme.primary
++                                }), onClick = {
+@@
+-                            }) { Text(eventName(event)) } }
++                            }) { Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
++                                Icon(when (event) { "BACHE", "LOMO_DE_TORO" -> Icons.Default.Warning
++                                    "DESVIACION" -> Icons.Default.Place; "GIRO" -> Icons.Default.Refresh
++                                    "CAMINO_MALO" -> Icons.Default.Build; else -> Icons.Default.MoreVert }, null, Modifier.size(20.dp))
++                                Text(eventName(event))
++                            } } }
+@@
+                 if (!finalizarSesion()) actionError = "No se pudo finalizar. La captura sigue activa."
++                else if (overlay && Settings.canDrawOverlays(context)) iniciarOverlayService(context)
+@@
+-        } catch (_: Exception) { metadataError = "Metadatos IMU ausentes o no legibles" }
++        } catch (cancelled: CancellationException) { throw cancelled }
++        catch (_: Exception) { metadataError = "Metadatos IMU ausentes o no legibles" }
+@@
+-            Metric("Marcas", trip.events.size.toString(), Modifier.weight(1f))
++            Metric("Marcas", if (trip.error == null) trip.events.size.toString() else "Sin lectura", Modifier.weight(1f))
+@@
+-private fun date(value: Long) = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale("es", "CL")).format(Date(value))
+-private fun time(value: Long) = SimpleDateFormat("HH:mm:ss", Locale("es", "CL")).format(Date(value))
++private fun date(value: Long) = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.forLanguageTag("es-CL")).format(Date(value))
++private fun time(value: Long) = SimpleDateFormat("HH:mm:ss", Locale.forLanguageTag("es-CL")).format(Date(value))
+*** Update File: app/src/main/java/com/monitoreovial/anotador/MainActivity.kt
+@@
+ fun deshacerUltimaAnotacion(): Boolean {
++    if (!SesionActual.activa || CaptureState.exporting) return false
+*** Update File: app/src/main/java/com/monitoreovial/anotador/OverlayService.kt
+@@
+-                            "Monitoreo finalizado. Puedes detener Sensor Logger.",
++                            "Recorrido finalizado. Guardando captura propia.",
+*** Add File: app/src/androidTest/java/com/monitoreovial/anotador/MonitoringNavigationTest.kt
++package com.monitoreovial.anotador
++
++import androidx.compose.ui.test.*
++import androidx.compose.ui.test.junit4.createAndroidComposeRule
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import org.junit.Rule
++import org.junit.Test
++import org.junit.runner.RunWith
++
++@RunWith(AndroidJUnit4::class)
++class MonitoringNavigationTest {
++    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
++
++    @Test fun navigationOpensRealSectionsWithoutStartingCapture() {
++        compose.onNodeWithTag("tab_1").performClick()
++        compose.onNodeWithText("Recorridos guardados").assertIsDisplayed()
++        compose.onNodeWithTag("tab_2").performClick()
++        compose.onNodeWithText("Eventos registrados").assertIsDisplayed()
++        compose.onNodeWithTag("tab_3").performClick()
++        compose.onNodeWithText("Preferencias").assertIsDisplayed()
++        compose.onNodeWithText("Tema oscuro").assertIsDisplayed()
++        compose.onNodeWithTag("tab_0").performClick()
++        compose.onNodeWithTag("home_content").assertIsDisplayed()
++    }
++}
+*** End Patch

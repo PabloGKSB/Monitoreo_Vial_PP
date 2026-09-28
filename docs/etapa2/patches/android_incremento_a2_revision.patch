@@ -1,0 +1,135 @@
+*** Begin Patch
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/ImuArchive.kt
++package com.monitoreovial.anotador.capture
++
++import java.io.File
++import java.util.zip.ZipEntry
++import java.util.zip.ZipOutputStream
++
++object ImuArchive {
++    fun create(directory: File, annotations: File, output: File) {
++        require(directory.isDirectory && annotations.isFile) { "Missing capture or annotations" }
++        require(File(directory, "metadata.json").isFile) { "Missing capture metadata" }
++        val inputs = directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") }.orEmpty() + annotations
++        require(inputs.map { it.name }.distinct().size == inputs.size) { "Duplicate archive entry" }
++        check(output.createNewFile()) { "Archive already exists" }
++        try {
++            ZipOutputStream(output.outputStream().buffered()).use { stream ->
++                for (file in inputs) {
++                    stream.putNextEntry(ZipEntry(file.name))
++                    file.inputStream().use { it.copyTo(stream) }
++                    stream.closeEntry()
++                }
++            }
++        } catch (error: Exception) {
++            output.delete()
++            throw error
++        }
++    }
++}
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/CapturePanel.kt
+@@
+-import java.util.zip.ZipEntry
+-import java.util.zip.ZipOutputStream
+@@
+-                        ZipOutputStream(zip.outputStream().buffered()).use { stream ->
+-                            val inputs = s.directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") }.orEmpty() + annotations
+-                            for (file in inputs) {
+-                                stream.putNextEntry(ZipEntry(file.name))
+-                                file.inputStream().use { it.copyTo(stream) }
+-                                stream.closeEntry()
+-                            }
+-                        }
+-                    } catch (error: Exception) { failure = error.message ?: "Error de exportacion"; output?.delete() }
++                        ImuArchive.create(s.directory, annotations, zip)
++                    } catch (error: Exception) { failure = error.message ?: "Error de exportacion" }
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/CaptureState.kt
+@@
+ import java.io.File
++import com.monitoreovial.anotador.SesionActual
+@@
+-                .putExtra("annotations", annotations.absolutePath))
++                .putExtra("annotations", annotations.absolutePath)
++                .putExtra("annotation_origin_monotonic_ms", SesionActual.reloj!!.startedMonotonicMs)
++                .putExtra("annotation_origin_epoch_ms", SesionActual.reloj!!.startedEpochMs))
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/RecordingService.kt
+@@
+                     .put("origin_monotonic_ns", origin.toString()).put("origin_epoch_ms", epoch)
++                    .put("annotation_origin_monotonic_ms", intent!!.getLongExtra("annotation_origin_monotonic_ms", -1))
++                    .put("annotation_origin_epoch_ms", intent.getLongExtra("annotation_origin_epoch_ms", -1))
+*** Update File: app/src/main/java/com/monitoreovial/anotador/MainActivity.kt
+@@
+ import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
+@@
+ fun PantallaRecorrido(
+@@
+         modifier = modifier
+             .fillMaxSize()
+             .padding(16.dp)
++            .verticalScroll(rememberScrollState())
+@@
+         LazyColumn(
+@@
+             modifier = Modifier
+-                .weight(1f)
++                .height(140.dp)
+                 .fillMaxWidth()
+@@
+ fun PantallaFinal(
+@@
+             .fillMaxSize()
+-            .padding(24.dp),
++            .padding(24.dp)
++            .verticalScroll(rememberScrollState()),
+@@
+             onClick =
+                 onNuevoRecorrido,
++            enabled = !CaptureState.snapshot.busy && !CaptureState.exporting,
+@@
+ fun limpiarParaNuevoRecorrido() {
++    if (CaptureState.snapshot.busy || CaptureState.exporting || SesionActual.activa) return
+*** Add File: app/src/test/java/com/monitoreovial/anotador/ImuArchiveTest.kt
++package com.monitoreovial.anotador
++
++import com.monitoreovial.anotador.capture.ImuArchive
++import org.junit.Assert.*
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import java.io.File
++import java.util.zip.ZipFile
++
++class ImuArchiveTest {
++    @get:Rule val tmp = TemporaryFolder()
++    @Test fun bundlesRawMetadataAndAnnotationsWithoutTemporaryFiles() {
++        val folder = tmp.newFolder("imu")
++        File(folder, "metadata.json").writeText("{\"state\":\"COMPLETED\"}")
++        File(folder, "accelerometer.csv").writeText("raw\n")
++        File(folder, "metadata.json.tmp").writeText("partial")
++        val annotations = tmp.newFile("annotations.csv").apply { writeText("annotations\n") }
++        val output = File(tmp.root, "session.zip")
++        ImuArchive.create(folder, annotations, output)
++        ZipFile(output).use { zip ->
++            assertEquals(setOf("metadata.json", "accelerometer.csv", "annotations.csv"), zip.entries().asSequence().map { it.name }.toSet())
++            assertEquals("raw\n", zip.getInputStream(zip.getEntry("accelerometer.csv")).bufferedReader().use { it.readText() })
++        }
++    }
++    @Test fun refusesToReplaceExistingArchive() {
++        val folder = tmp.newFolder("imu")
++        File(folder, "metadata.json").writeText("{}")
++        val annotations = tmp.newFile("annotations.csv")
++        val output = tmp.newFile("existing.zip").apply { writeText("preserve") }
++        try { ImuArchive.create(folder, annotations, output); fail("Expected refusal") }
++        catch (_: IllegalStateException) { }
++        assertEquals("preserve", output.readText())
++    }
++    @Test fun refusesSessionWithoutMetadata() {
++        val output = File(tmp.root, "missing.zip")
++        try { ImuArchive.create(tmp.newFolder("imu"), tmp.newFile("annotations.csv"), output); fail("Expected refusal") }
++        catch (_: IllegalArgumentException) { }
++        assertFalse(output.exists())
++    }
++}
+*** End Patch

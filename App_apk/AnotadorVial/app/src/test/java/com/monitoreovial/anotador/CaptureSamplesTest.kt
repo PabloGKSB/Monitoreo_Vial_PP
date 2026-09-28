@@ -1,0 +1,82 @@
+package com.monitoreovial.anotador
+
+import com.monitoreovial.anotador.capture.*
+import org.apache.commons.csv.CSVFormat
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+class CaptureSamplesTest {
+    @get:Rule val tmp = TemporaryFolder()
+    private fun fields(sample: CaptureSample): Map<String, String> {
+        val csv = CaptureSchema.header(sample.sensor) + CaptureSchema.row(sample, 1_000_000_000L, 10000L)
+        return CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get().parse(csv.reader()).use { it.first().toMap() }
+    }
+    @Test fun rotationKeepsQuaternionAndAccuracyWithoutReordering() {
+        val values = fields(RotationSample(1_100_000_000, .1f, .2f, .3f, .9f, .05f, 5, 3))
+        assertEquals("0.1", values["qx"])
+        assertEquals("0.9", values["qw"])
+        assertEquals("0.05", values["heading_accuracy_rad"])
+        assertEquals("3", values["sensor_accuracy"])
+        assertEquals("10100", values["epoch_ms_derived"])
+    }
+    @Test fun missingRotationComponentsRemainBlankNotInvented() {
+        val values = fields(RotationSample(1_100_000_000, .1f, .2f, .3f, null, null, 3, 0))
+        assertEquals("", values["qw"])
+        assertEquals("", values["heading_accuracy_rad"])
+        assertEquals("3", values["value_count"])
+    }
+    @Test fun gpsKeepsIndependentEpochAndNativeClock() {
+        val values = fields(GpsSample(1_250_000_000, 11111, -38.7, -72.6, 123.0, 10f, 90f, 4f, 5f, .3f, 2f, false))
+        assertEquals("1250000000", values["sensor_timestamp_ns"])
+        assertEquals("10250", values["epoch_ms_derived"])
+        assertEquals("11111", values["location_epoch_ms"])
+        assertEquals("0.25", values["seconds_elapsed"])
+        assertEquals("10.0", values["speed_mps"])
+        assertEquals("4.0", values["horizontal_accuracy_m"])
+    }
+    @Test fun missingGpsValuesAreNotZeroAndMockIsExplicit() {
+        val values = fields(GpsSample(1_100_000_000, 1234, -38.7, -72.6, null, null, null, null, null, null, null, true))
+        listOf("altitude_m", "speed_mps", "bearing_deg", "horizontal_accuracy_m", "vertical_accuracy_m", "speed_accuracy_mps", "bearing_accuracy_deg").forEach {
+            assertEquals("", values[it])
+        }
+        assertEquals("true", values["is_mock"])
+    }
+    @Test fun writerDrainsAllSixStreamsWithTheirOwnHeaders() {
+        val done = CountDownLatch(1)
+        var error: String? = "not completed"
+        val writer = ImuSessionWriter(tmp.root, 1_000_000_000, 10000, CaptureSchema.columns.keys.toList()) { error = it; done.countDown() }
+        writer.start()
+        repeat(100) { i ->
+            val t = 1_000_000_000L + i * 10_000_000L
+            listOf("accelerometer", "gyroscope", "gravity", "linear_acceleration").forEach { assertTrue(writer.offer(ImuSample(it, t, 1f, 2f, 3f))) }
+            assertTrue(writer.offer(RotationSample(t, 0f, 0f, 0f, 1f, null, 4, 3)))
+        }
+        assertTrue(writer.offer(GpsSample(1_500_000_000, 10500, -38.0, -72.0, null, null, null, 3f, null, null, null, false)))
+        writer.finish()
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        assertNull(error)
+        for (name in CaptureSchema.columns.keys) {
+            val lines = File(tmp.root, "$name.csv").readLines()
+            assertEquals(CaptureSchema.header(name).trimEnd(), lines.first())
+            assertEquals(if (name == "gps") 2 else 101, lines.size)
+        }
+        assertEquals(0L, writer.dropped.get())
+    }
+    @Test fun headerOnlyGpsFileDoesNotInventFixes() {
+        val done = CountDownLatch(1)
+        val writer = ImuSessionWriter(tmp.root, 0, 0, listOf("gps")) { done.countDown() }
+        writer.start(); writer.finish()
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        assertEquals(1, File(tmp.root, "gps.csv").readLines().size)
+        assertEquals(0L, writer.stats.getValue("gps").snapshot().count)
+    }
+    @Test(expected = IllegalArgumentException::class)
+    fun cannotUseUnrecognizedFileNames() {
+        ImuSessionWriter(tmp.root, 0, 0, listOf("../other")) { }
+    }
+}

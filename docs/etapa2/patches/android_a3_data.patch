@@ -1,0 +1,162 @@
+*** Begin Patch
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/CaptureSamples.kt
++package com.monitoreovial.anotador.capture
++
++sealed interface CaptureSample {
++    val sensor: String
++    val timestampNs: Long
++    fun cells(): List<String>
++}
++
++data class RotationSample(
++    override val timestampNs: Long, val x: Float, val y: Float, val z: Float,
++    val w: Float?, val headingAccuracyRad: Float?, val valueCount: Int, val accuracy: Int
++) : CaptureSample {
++    override val sensor = "rotation_vector"
++    override fun cells() = listOf(x, y, z, w, headingAccuracyRad, valueCount, accuracy).map { it?.toString().orEmpty() }
++}
++
++data class GpsSample(
++    override val timestampNs: Long, val epochMs: Long, val latitude: Double, val longitude: Double,
++    val altitudeM: Double?, val speedMps: Float?, val bearingDeg: Float?, val accuracyM: Float?,
++    val verticalAccuracyM: Float?, val speedAccuracyMps: Float?, val bearingAccuracyDeg: Float?,
++    val mock: Boolean
++) : CaptureSample {
++    override val sensor = "gps"
++    override fun cells() = listOf(epochMs, latitude, longitude, altitudeM, speedMps, bearingDeg,
++        accuracyM, verticalAccuracyM, speedAccuracyMps, bearingAccuracyDeg, "gps", mock).map { it?.toString().orEmpty() }
++}
++
++object CaptureSchema {
++    const val VERSION = "capture-preview-2"
++    val columns = mapOf(
++        "accelerometer" to "x,y,z", "gyroscope" to "x,y,z", "gravity" to "x,y,z",
++        "linear_acceleration" to "x,y,z",
++        "rotation_vector" to "qx,qy,qz,qw,heading_accuracy_rad,value_count,sensor_accuracy",
++        "gps" to "location_epoch_ms,latitude,longitude,altitude_m,speed_mps,bearing_deg,horizontal_accuracy_m,vertical_accuracy_m,speed_accuracy_mps,bearing_accuracy_deg,provider,is_mock"
++    )
++    fun header(sensor: String) = "sensor_timestamp_ns,epoch_ms_derived,seconds_elapsed," + columns.getValue(sensor) + "\n"
++    fun row(sample: CaptureSample, originNs: Long, epochMs: Long): String {
++        val delta = sample.timestampNs - originNs
++        return (listOf(sample.timestampNs.toString(), (epochMs + delta / 1_000_000L).toString(), (delta / 1e9).toString()) + sample.cells()).joinToString(",") + "\n"
++    }
++}
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/ImuSessionWriter.kt
+@@
+-data class ImuSample(val sensor: String, val timestampNs: Long, val x: Float, val y: Float, val z: Float)
++data class ImuSample(override val sensor: String, override val timestampNs: Long, val x: Float, val y: Float, val z: Float) : CaptureSample {
++    override fun cells() = listOf(x.toString(), y.toString(), z.toString())
++}
+@@
+-    private val queue = ArrayBlockingQueue<ImuSample>(capacity)
++    init { require(sensorNames.distinct().size == sensorNames.size && sensorNames.all { it in CaptureSchema.columns }) }
++    private val queue = ArrayBlockingQueue<CaptureSample>(capacity)
+@@
+-                writer.write("sensor_timestamp_ns,epoch_ms_derived,seconds_elapsed,x,y,z\n")
++                writer.write(CaptureSchema.header(name))
+@@
+-                    val delta = sample.timestampNs - originNs
+-                    val row = "${sample.timestampNs},${epochMs + delta / 1_000_000L},${delta / 1e9},${sample.x},${sample.y},${sample.z}\n"
++                    val row = CaptureSchema.row(sample, originNs, epochMs)
+@@
+-    fun offer(sample: ImuSample): Boolean = synchronized(gate) {
++    fun offer(sample: CaptureSample): Boolean = synchronized(gate) {
++        require(sample.sensor in stats) { "Unregistered sample stream" }
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/GpsAccess.kt
++package com.monitoreovial.anotador.capture
++
++import android.Manifest
++import android.content.Context
++import android.content.pm.PackageManager
++import android.location.LocationManager
++import androidx.core.content.ContextCompat
++
++object GpsAccess {
++    fun requested(context: Context) = context.getSharedPreferences("monitoring_ui", Context.MODE_PRIVATE).getBoolean("gps", true)
++    fun precise(context: Context) = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
++    fun readiness(context: Context): String {
++        if (!precise(context)) return "Sin permiso preciso"
++        val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
++        return when {
++            !manager.allProviders.contains(LocationManager.GPS_PROVIDER) -> "GPS no disponible"
++            !manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> "GPS desactivado"
++            else -> "Disponible"
++        }
++    }
++}
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/CaptureState.kt
+@@
+-    val error: String? = null, val directory: File? = null
++    val error: String? = null, val directory: File? = null,
++    val streams: Map<String, StreamSummary> = emptyMap(),
++    val sensorStates: Map<String, String> = emptyMap(),
++    val gpsState: String = "Sin captura", val gpsAccuracyM: Float? = null,
++    val gpsAgeSeconds: Double? = null, val gpsSpeedMps: Float? = null
+@@
+ object CaptureState {
++    var uiVisible = false
+@@
+-    fun begin(context: Context, annotations: File) {
++    fun begin(context: Context, annotations: File, gpsRequested: Boolean = true) {
+@@
+                 .putExtra("annotations", annotations.absolutePath)
++                .putExtra("gps_requested", gpsRequested && GpsAccess.requested(context))
++                .putExtra("started_from_visible_ui", uiVisible)
+*** Update File: app/src/main/java/com/monitoreovial/anotador/MainActivity.kt
+@@
+         super.onResume()
++        CaptureState.uiVisible = true
+@@
+             iniciarOverlayService(this)
+         }
+     }
++
++    override fun onPause() {
++        CaptureState.uiVisible = false
++        super.onPause()
++    }
+ }
+@@
+ fun iniciarNuevaSesion(
+     context: Context,
+-    nombreBase: String
++    nombreBase: String,
++    gpsRequested: Boolean = true
+@@
+-    CaptureState.begin(context.applicationContext, archivo)
++    CaptureState.begin(context.applicationContext, archivo, gpsRequested)
+*** Update File: app/src/main/java/com/monitoreovial/anotador/OverlayService.kt
+@@
+                 text =
+                     "▶ INICIAR MONITOREO"
+@@
+                 setOnClickListener {
++                    if (com.monitoreovial.anotador.capture.GpsAccess.requested(this@OverlayService)) {
++                        abrirAplicacion()
++                        Toast.makeText(this@OverlayService, "Inicia desde la app para comprobar permisos GPS", Toast.LENGTH_LONG).show()
++                        ocultarPanel()
++                        return@setOnClickListener
++                    }
+*** Update File: app/src/main/AndroidManifest.xml
+@@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
++    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
++    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
++    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+@@
+         <service android:name=".capture.RecordingService" android:exported="false"
+-            android:stopWithTask="false" android:foregroundServiceType="specialUse">
++            android:stopWithTask="false" android:foregroundServiceType="specialUse|location">
+*** Update File: app/src/main/res/xml/backup_rules.xml
+@@
+ <full-backup-content>
++    <exclude domain="external" path="Documents/" />
+*** Update File: app/src/main/res/xml/data_extraction_rules.xml
+@@
+     <cloud-backup>
++        <exclude domain="external" path="Documents/" />
+@@
+ </data-extraction-rules>
++
+*** End Patch

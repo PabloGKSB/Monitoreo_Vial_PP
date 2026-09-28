@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {"title": "Monitoreo vial | Arquitectura actual V0", "quality_profile": "showcase"},
+  "components": [
+    {"id":"zip","type":"external","label":"Recorridos ZIP","sublabel":"data/raw/ o carga manual","pos":[40,70],"size":[220,76]},
+    {"id":"ui","type":"frontend","label":"Streamlit","sublabel":"app.py | interfaz y cache","pos":[380,70],"size":[220,76]},
+    {"id":"map","type":"frontend","label":"Mapa y graficos","sublabel":"maps.py | Folium + Plotly","pos":[720,70],"size":[220,76]},
+    {"id":"analyzer","type":"backend","label":"TripAnalyzer","sublabel":"analyzer.py | orquestacion","pos":[380,275],"size":[220,76]},
+    {"id":"files","type":"database","label":"Resultados locales","sublabel":"outputs/ | CSV, JSON, HTML","pos":[720,275],"size":[220,76]},
+    {"id":"load","type":"backend","label":"Carga y calidad","sublabel":"loader.py + quality.py","pos":[40,450],"size":[220,76]},
+    {"id":"signal","type":"backend","label":"Senal y detector","sublabel":"preprocessing, features, detector","pos":[380,450],"size":[220,76]},
+    {"id":"geo","type":"backend","label":"GPS y segmentos","sublabel":"gps, segmentation, scoring","pos":[720,450],"size":[220,76]}
+  ],
+  "connections": [
+    {"from":"zip","to":"ui","label":"seleccion"},
+    {"from":"ui","to":"analyzer","label":"analyze()","variant":"emphasis","labelDy":65},
+    {"from":"ui","to":"map","label":"AnalysisResult"},
+    {"from":"analyzer","to":"files","label":"export()"},
+    {"from":"map","to":"files","label":"HTML","labelDy":65},
+    {"from":"analyzer","to":"load","label":"carga ZIP","fromSide":"left","toSide":"top"},
+    {"from":"analyzer","to":"signal","label":"procesa","fromSide":"bottom","toSide":"top","labelDy":65},
+    {"from":"analyzer","to":"geo","label":"georreferencia","fromSide":"right","toSide":"top"}
+  ],
+  "cards": [
+    {"dot":"cyan","title":"Coordinacion en Python","items":["AnalysisConfig fija parametros; AnalysisResult devuelve tablas a app.py.","Orden: carga, calidad, senal, ventanas, detector, GPS y segmentos."]},
+    {"dot":"emerald","title":"Datos y dependencias","items":["NumPy, pandas y SciPy procesan sensores en memoria.","Folium solicita teselas OpenStreetMap por Internet; RAW permanece local."]},
+    {"dot":"amber","title":"Alcance del V0","items":["Detector y estado vial experimentales, sin ML supervisado.","annotations.py es auxiliar y aun no se integra al dashboard."]}
+  ]
+}

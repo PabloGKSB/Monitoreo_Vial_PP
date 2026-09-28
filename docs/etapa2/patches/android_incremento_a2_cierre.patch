@@ -1,0 +1,21 @@
+*** Begin Patch
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/RecordingService.kt
+@@
+     private val completed = AtomicBoolean(false)
++    private var completionReady = false
+@@
+             if (w != null && w.stats.getValue("accelerometer").snapshot().count == 0L)
+                 terminalError = terminalError ?: "No se recibieron muestras de acelerometro"
++            if (gyroAvailable && w?.stats?.get("gyroscope")?.snapshot()?.count == 0L)
++                terminalError = terminalError ?: "No se recibieron muestras de giroscopio"
+@@
+         main.post {
+             main.removeCallbacks(ticker)
++            completionReady = true
+@@
+-        if (!completed.get()) { terminalError = "Servicio interrumpido"; finishCapture() }
++        if (!completionReady) {
++            if (!completed.get()) terminalError = "Servicio interrumpido"
++            finishCapture()
++        }
+*** End Patch

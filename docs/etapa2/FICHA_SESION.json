@@ -1,0 +1,22 @@
+{
+  "template_version": "PE-0.2",
+  "status": "TEMPLATE_NOT_A_RECORDED_SESSION",
+  "session_id": null,
+  "corridor_id": null,
+  "direction": null,
+  "pass_index": null,
+  "date_local": null,
+  "timezone": "America/Santiago",
+  "operator_role": null,
+  "device": {"model": null, "android_version": null, "sensor_logger_version": null, "anotador_version": null, "haptic_feedback": null},
+  "vehicle": {"pseudonymous_id": null, "model": null, "suspension_notes": null},
+  "mount": {"position": null, "orientation": null, "tightness_before": null, "tightness_after": null, "photo_ref": null},
+  "annotation": {"semantics": "RETROSPECTIVE_AFTER_PERCEIVED_STABILIZATION", "reported_delay_range_s": [2, 3], "protocol_version": "PE-0.2"},
+  "capture": {"started_at_utc": null, "ended_at_utc": null, "sensor_types": [], "requested_hz": null, "observed_hz": null, "battery_start_percent": null, "battery_end_percent": null, "storage_bytes": null, "observed_speed_range_kmh": null},
+  "raw": {"sensor_zip": null, "annotations_csv": null, "sensor_sha256": null, "annotations_sha256": null},
+  "incidents": [],
+  "external_evidence_refs": [],
+  "review": {"decision": null, "reasons": [], "reviewer": null, "reviewed_at_utc": null},
+  "unknown_fields": [],
+  "notes": null
+}

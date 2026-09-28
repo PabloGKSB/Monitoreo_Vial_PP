@@ -23,7 +23,10 @@ SENSOR_ALIASES: dict[str, tuple[str, ...]] = {
     "gyroscope_uncalibrated": ("gyroscopeuncalibrated", "uncalibratedgyroscope"),
     "gps": ("location", "gps", "geolocation", "position"),
     "orientation": ("orientation", "rotationvector"),
-    "compass": ("compass", "magnetometer", "magneticfield"),
+    "gravity": ("gravity",),
+    "magnetometer_uncalibrated": ("magnetometeruncalibrated",),
+    "magnetometer": ("magnetometer", "magneticfield"),
+    "compass": ("compass",),
     "metadata": ("metadata", "deviceinfo"),
     "annotation": ("annotation", "annotations", "labels"),
 }
@@ -132,25 +135,37 @@ def _prepare_frame(sensor: str, frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _apply_recording_clock(sensors: dict[str, pd.DataFrame], warnings: list[str]) -> None:
-    """Anchor elapsed time to the local recording clock declared by metadata."""
+    """Prefer absolute epoch clocks; formatted recording time is only a fallback."""
 
     metadata = sensors.get("metadata")
     if metadata is None or metadata.empty:
         return
     row = metadata.iloc[0]
-    recording_time = row.get("recordingtime")
-    timezone = row.get("recordingtimezone")
-    if pd.isna(recording_time) or pd.isna(timezone):
-        return
-    try:
-        parsed = datetime.strptime(str(recording_time), "%Y-%m-%d_%H-%M-%S")
-        local_start = pd.Timestamp(parsed).tz_localize(str(timezone))
-    except (TypeError, ValueError, KeyError) as exc:
-        warnings.append(f"Could not apply metadata recording clock: {exc}")
-        return
+    epoch = pd.to_numeric(row.get("recordingepochtime"), errors="coerce")
+    origin = pd.to_datetime(epoch, unit="ms", utc=True, errors="coerce")
+    recording_time, timezone = row.get("recordingtime"), row.get("recordingtimezone")
+    if pd.notna(recording_time) and pd.notna(timezone):
+        try:
+            parsed = datetime.strptime(str(recording_time), "%Y-%m-%d_%H-%M-%S")
+            local_start = pd.Timestamp(parsed).tz_localize(str(timezone)).tz_convert("UTC")
+            if pd.isna(origin):
+                origin = local_start
+            elif abs((local_start - origin).total_seconds()) > 2:
+                warnings.append("Metadata text disagrees with epoch; absolute epoch retained")
+        except (TypeError, ValueError, KeyError) as exc:
+            warnings.append(f"Could not interpret metadata recording text: {exc}")
     for frame in sensors.values():
-        if "seconds_elapsed" in frame:
-            frame["timestamp"] = local_start + pd.to_timedelta(frame["seconds_elapsed"], unit="s")
+        if "seconds_elapsed" not in frame:
+            continue
+        if "time" in frame:
+            absolute = elapsed_to_timestamp(frame["seconds_elapsed"], frame["time"])
+            valid = pd.to_numeric(frame["time"], errors="coerce").notna()
+        else:
+            absolute = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns, UTC]")
+            valid = pd.Series(False, index=frame.index)
+        if pd.notna(origin):
+            fallback = origin + pd.to_timedelta(frame["seconds_elapsed"], unit="s")
+            frame["timestamp"] = absolute.where(valid, fallback)
 
 
 def load_trip(zip_path: str | Path, *, require_minimum: bool = True) -> TripData:

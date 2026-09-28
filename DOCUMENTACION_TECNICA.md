@@ -147,7 +147,7 @@ Su estrategia es:
 6. Ordenar y eliminar timestamps duplicados.
 7. Validar columnas mínimas.
 8. Exigir acelerómetro + GPS y tratar los demás sensores como opcionales.
-9. Usar la hora y zona de `Metadata.csv` para reconstruir timestamps locales.
+9. Conservar el epoch absoluto de cada muestra. Si falta, reconstruirlo con `recording epoch time` de metadata y el tiempo transcurrido; usar hora textual y zona solo como ultimo recurso. Internamente los timestamps son UTC.
 
 El campo `time` original se conserva. La columna derivada `timestamp` se ancla a `recording time` y `recording timezone`, mientras `seconds_elapsed` se usa para cálculos de diferencias temporales.
 

@@ -20,10 +20,10 @@ def elapsed_to_timestamp(elapsed: pd.Series, epoch_ns: pd.Series | None) -> pd.S
 
     if epoch_ns is not None:
         numeric = pd.to_numeric(epoch_ns, errors="coerce")
-        unit = "ns" if numeric.dropna().median() > 1e15 else "ms"
+        median = numeric.dropna().abs().median()
+        unit = "ns" if median > 1e17 else "us" if median > 1e14 else "ms" if median > 1e11 else "s"
         parsed = pd.to_datetime(numeric, unit=unit, utc=True, errors="coerce")
         if parsed.notna().any():
             return parsed
     origin = pd.Timestamp("1970-01-01", tz="UTC")
     return origin + pd.to_timedelta(elapsed, unit="s")
-

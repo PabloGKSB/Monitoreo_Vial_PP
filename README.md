@@ -100,7 +100,32 @@ seconds_elapsed,label
 
 `src/annotations.py` busca el evento detectado mas cercano dentro de una tolerancia configurable (5 s por defecto), sin inventar coincidencias fuera de ella.
 
-## Pruebas
+## Campana piloto etiquetada
+
+Diseno, contrato de datos, backlog trazable y protocolo de Etapa 2:
+[paquete de trabajo](docs/etapa2/README.md). Distingue evidencia actual de
+diseno propuesto y conserva pendientes; no declara cierre academico automatico.
+
+El experimento opcional BACHE/NORMAL del 25 de septiembre esta documentado en
+[la guia del piloto](docs/CAMPANA_PILOTO_2026_09_25.md). Incluye auditoria de
+relojes, ventanas, umbral y Random Forest, evaluacion por recorrido y purga
+espacial. No sustituye el detector de Streamlit ni constituye validacion de terreno.
+Instalar `requirements-pilot.txt` para ejecutarlo y habilitar sus pruebas;
+sin scikit-learn las pruebas del piloto se omiten.
+
+## Ejecucion de pruebas
+
+Si Windows muestra `PermissionError: [WinError 5]` en `pytest-of-GOMEPAB`
+o `.pytest_cache`, ejecutar desde la raiz del proyecto:
+
+```powershell
+.\.venv\Scripts\python.exe run_tests.py
+```
+
+Este lanzador usa una carpeta temporal unica por ejecucion y desactiva la cache
+de pytest. Ejecuta la misma suite, devuelve su codigo de salida y elimina solo
+su propia carpeta temporal al terminar. No cambia permisos ni borra datos del
+proyecto. No requiere ejecutar PowerShell como administrador.
 
 ```powershell
 pytest -q

@@ -1,0 +1,24 @@
+*** Begin Patch
+*** Update File: app/src/main/java/com/monitoreovial/anotador/ui/MonitoringApp.kt
+@@
+     var pendingGpsStart by rememberSaveable { mutableStateOf(false) }
++    var gpsPermissionReturned by rememberSaveable { mutableStateOf(false) }
+@@
+     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+         gpsReadiness = GpsAccess.readiness(context)
+-        if (pendingGpsStart) scope.launch {
++        gpsPermissionReturned = true
++    }
++    LaunchedEffect(pendingGpsStart, gpsPermissionReturned) {
++        if (pendingGpsStart && gpsPermissionReturned) {
+             while (!CaptureState.uiVisible) delay(100)
+             if (pendingGpsStart) {
+                 pendingGpsStart = false
++                gpsPermissionReturned = false
+                 gpsReadiness = GpsAccess.readiness(context)
+                 if (gpsReadiness == "Disponible") startCapture(true) else gpsWarning = gpsReadiness
+@@
+             !GpsAccess.precise(context) -> {
+                 pendingGpsStart = true
++                gpsPermissionReturned = false
+*** End Patch

@@ -28,7 +28,8 @@ def test_loader_detects_nested_and_optional_sensors(tmp_path):
     trip = load_trip(path)
     assert {"accelerometer", "gps", "gyroscope"} <= set(trip.available_sensors)
     assert "timestamp" in trip.sensors["accelerometer"]
-    assert str(trip.sensors["accelerometer"].iloc[0]["timestamp"]) == "2026-08-14 13:10:19-04:00"
+    assert str(trip.sensors["accelerometer"].iloc[0]["timestamp"]) == "2023-11-14 22:13:20+00:00"
+    assert trip.sensors["gps"].iloc[0]["timestamp"] == pd.Timestamp("2026-08-14 17:10:19Z")
     assert any("Empty annotation" in warning for warning in trip.warnings)
 
 

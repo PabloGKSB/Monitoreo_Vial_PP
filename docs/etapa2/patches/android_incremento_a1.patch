@@ -1,0 +1,259 @@
+*** Begin Patch
+*** Add File: app/src/main/java/com/monitoreovial/anotador/session/SessionClock.kt
++package com.monitoreovial.anotador.session
++
++data class AnnotationTime(val epochMs: Long, val elapsedMs: Long)
++
++/** Preserve civil time for correlation and monotonic time for durations. */
++class SessionClock(
++    private val epochNow: () -> Long,
++    private val monotonicNow: () -> Long
++) {
++    val startedMonotonicMs: Long = monotonicNow()
++    val startedEpochMs: Long = epochNow()
++
++    fun elapsedMs(): Long = monotonicNow() - startedMonotonicMs
++
++    fun mark(): AnnotationTime = AnnotationTime(epochNow(), elapsedMs())
++}
+*** Add File: app/src/main/java/com/monitoreovial/anotador/storage/AnnotationCsvStore.kt
++package com.monitoreovial.anotador.storage
++
++import java.io.File
++import java.io.FileOutputStream
++import java.nio.file.Files
++import java.nio.file.StandardCopyOption
++
++/** Legacy-compatible annotation storage; not a high-frequency sensor writer. */
++object AnnotationCsvStore {
++    const val HEADER = "trip_id,timestamp,epoch_ms,elapsed_ms,event_type\n"
++
++    fun row(tripId: String, timestamp: String, epochMs: Long, elapsedMs: Long, type: String): String =
++        listOf(tripId, timestamp, epochMs.toString(), elapsedMs.toString(), type)
++            .joinToString(",") { escape(it) } + "\n"
++
++    private fun escape(value: String): String =
++        if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' })
++            "\"" + value.replace("\"", "\"\"") + "\"" else value
++
++    @Synchronized
++    fun create(file: File) {
++        // Never truncate a recording if a generated name happens to collide.
++        Files.createFile(file.toPath())
++        try {
++            writeAndSync(file, HEADER, false)
++        } catch (error: Exception) {
++            file.delete()
++            throw error
++        }
++    }
++
++    @Synchronized
++    fun append(file: File, row: String) {
++        require(file.isFile) { "Missing annotation file" }
++        writeAndSync(file, row, true)
++    }
++
++    @Synchronized
++    fun replace(file: File, rows: Sequence<String>) {
++        require(file.isFile) { "Missing annotation file" }
++        val temporary = File.createTempFile("annotations-", ".tmp", file.absoluteFile.parentFile)
++        try {
++            FileOutputStream(temporary).use { stream ->
++                stream.write(HEADER.toByteArray(Charsets.UTF_8))
++                rows.forEach { stream.write(it.toByteArray(Charsets.UTF_8)) }
++                stream.fd.sync()
++            }
++            // Same-directory atomic replacement; fail rather than truncate the original.
++            Files.move(temporary.toPath(), file.toPath(),
++                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
++        } finally {
++            temporary.delete()
++        }
++    }
++
++    private fun writeAndSync(file: File, value: String, append: Boolean) {
++        FileOutputStream(file, append).use { stream ->
++            stream.write(value.toByteArray(Charsets.UTF_8))
++            stream.fd.sync()
++        }
++    }
++}
+*** Update File: app/src/main/java/com/monitoreovial/anotador/MainActivity.kt
+@@
+ import com.monitoreovial.anotador.ui.theme.AnotadorVialTheme
++import com.monitoreovial.anotador.session.SessionClock
++import com.monitoreovial.anotador.storage.AnnotationCsvStore
+@@
+-import java.io.FileWriter
+@@
+ object SesionActual {
++    var reloj: SessionClock? = null
+@@
+-    SesionActual.tiempoInicioElapsed =
+-        SystemClock.elapsedRealtime()
++    val reloj = SessionClock(System::currentTimeMillis, SystemClock::elapsedRealtime)
++    SesionActual.reloj = reloj
++    SesionActual.tiempoInicioElapsed = reloj.startedMonotonicMs
+@@
+-    val duracion =
+-        SystemClock.elapsedRealtime() -
+-                SesionActual.tiempoInicioElapsed
++    val duracion = SesionActual.reloj?.elapsedMs() ?: return false
+@@
+-    val epoch =
+-        System.currentTimeMillis()
++    val momento = SesionActual.reloj?.mark() ?: return false
++    val epoch = momento.epochMs
+@@
+-    val elapsed =
+-
+-        elapsedForzado
+-            ?: (
+-                    SystemClock.elapsedRealtime() -
+-                            SesionActual.tiempoInicioElapsed
+-                    )
++    val elapsed = elapsedForzado ?: momento.elapsedMs
+@@
+-        FileWriter(
+-            archivo,
+-            false
+-        ).use { writer ->
+-
+-            writer.append(
+-                "trip_id,timestamp,epoch_ms,elapsed_ms,event_type\n"
+-            )
+-        }
++        AnnotationCsvStore.create(archivo)
+@@
+-        FileWriter(
+-            archivo,
+-            true
+-        ).use { writer ->
+-
+-            writer.append(
+-                "$idRecorrido," +
+-                        "${anotacion.timestamp}," +
+-                        "${anotacion.epochMs}," +
+-                        "${anotacion.elapsedMs}," +
+-                        "${anotacion.tipo}\n"
+-            )
+-        }
++        AnnotationCsvStore.append(archivo, AnnotationCsvStore.row(
++            idRecorrido, anotacion.timestamp, anotacion.epochMs,
++            anotacion.elapsedMs, anotacion.tipo
++        ))
+@@
+-        FileWriter(
+-            archivo,
+-            false
+-        ).use { writer ->
+-
+-            writer.append(
+-                "trip_id,timestamp,epoch_ms,elapsed_ms,event_type\n"
+-            )
+-
+-
+-            // La lista visual está al revés.
+-            // El CSV queda cronológico.
+-            anotaciones
+-                .asReversed()
+-                .forEach { anotacion ->
+-
+-                    writer.append(
+-                        "$idRecorrido," +
+-                                "${anotacion.timestamp}," +
+-                                "${anotacion.epochMs}," +
+-                                "${anotacion.elapsedMs}," +
+-                                "${anotacion.tipo}\n"
+-                    )
+-                }
+-        }
++        AnnotationCsvStore.replace(archivo, anotaciones.asReversed().asSequence().map { anotacion ->
++            AnnotationCsvStore.row(idRecorrido, anotacion.timestamp, anotacion.epochMs,
++                anotacion.elapsedMs, anotacion.tipo)
++        })
+*** Add File: app/src/test/java/com/monitoreovial/anotador/SessionClockTest.kt
++package com.monitoreovial.anotador
++
++import com.monitoreovial.anotador.session.SessionClock
++import org.junit.Assert.assertEquals
++import org.junit.Test
++
++class SessionClockTest {
++    @Test fun civilClockJumpDoesNotChangeDuration() {
++        var epoch = 100000L
++        var monotonic = 5000L
++        val clock = SessionClock({ epoch }, { monotonic })
++        epoch -= 60000L
++        monotonic += 2500L
++        val mark = clock.mark()
++        assertEquals(2500L, mark.elapsedMs)
++        assertEquals(40000L, mark.epochMs)
++        assertEquals(100000L, clock.startedEpochMs)
++    }
++
++    @Test fun newSessionHasItsOwnOrigin() {
++        var monotonic = 20L
++        val first = SessionClock({ 1000L }, { monotonic })
++        monotonic = 100L
++        val second = SessionClock({ 1080L }, { monotonic })
++        assertEquals(80L, first.elapsedMs())
++        assertEquals(0L, second.elapsedMs())
++    }
++}
+*** Add File: app/src/test/java/com/monitoreovial/anotador/AnnotationCsvStoreTest.kt
++package com.monitoreovial.anotador
++
++import com.monitoreovial.anotador.storage.AnnotationCsvStore as Store
++import org.junit.Assert.*
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import java.io.File
++import java.io.IOException
++
++class AnnotationCsvStoreTest {
++    @get:Rule val temporary = TemporaryFolder()
++
++    @Test fun legacyHeaderAndAppendArePreserved() {
++        val file = File(temporary.root, "trip.csv")
++        Store.create(file)
++        val row = Store.row("trip", "2026-09-26", 123L, 4L, "BACHE")
++        Store.append(file, row)
++        assertEquals(Store.HEADER + "trip,2026-09-26,123,4,BACHE\n", file.readText())
++    }
++
++    @Test fun duplicateCreateDoesNotEraseRecording() {
++        val file = File(temporary.root, "trip.csv")
++        Store.create(file)
++        Store.append(file, "original\n")
++        try { Store.create(file); fail("Expected collision") } catch (_: IOException) { }
++        assertEquals(Store.HEADER + "original\n", file.readText())
++    }
++
++    @Test fun replacementUsesCompleteNewSnapshot() {
++        val file = File(temporary.root, "trip.csv")
++        Store.create(file)
++        Store.append(file, "old\n")
++        Store.replace(file, sequenceOf("start\n", "end\n"))
++        assertEquals(Store.HEADER + "start\nend\n", file.readText())
++        assertEquals(1, temporary.root.listFiles()!!.size)
++    }
++
++    @Test fun failedSnapshotPreservesOriginalBytes() {
++        val file = File(temporary.root, "trip.csv")
++        Store.create(file)
++        Store.append(file, "original\n")
++        val before = file.readBytes()
++        val broken = sequence<String> { yield("partial\n"); throw IOException("Simulated failure") }
++        try { Store.replace(file, broken); fail("Expected failure") } catch (_: IOException) { }
++        assertArrayEquals(before, file.readBytes())
++        assertEquals(1, temporary.root.listFiles()!!.size)
++    }
++
++    @Test fun csvQuotesSpecialCharacters() {
++        assertEquals("\"a,b\",\"a\"\"b\",1,2,BACHE\n", Store.row("a,b", "a\"b", 1L, 2L, "BACHE"))
++    }
++}
+*** End Patch

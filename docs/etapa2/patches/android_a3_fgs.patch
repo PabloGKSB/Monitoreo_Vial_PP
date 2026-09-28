@@ -1,0 +1,9 @@
+*** Begin Patch
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/RecordingService.kt
+@@
+-        if (Build.VERSION.SDK_INT >= 34) startForeground(2002, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+-        else startForeground(2002, notification)
++        if (Build.VERSION.SDK_INT >= 29) startForeground(2002, notification,
++            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
++        else startForeground(2002, notification)
+*** End Patch

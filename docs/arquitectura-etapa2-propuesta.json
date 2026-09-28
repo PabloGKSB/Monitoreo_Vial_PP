@@ -1,0 +1,142 @@
+{
+    "schema_version":  1,
+    "diagram_type":  "architecture",
+    "meta":  {
+                 "title":  "Monitoreo vial · arquitectura propuesta con Sensor Logger",
+                 "quality_profile":  "showcase"
+             },
+    "components":  [
+                       {
+                           "id":  "logger",
+                           "type":  "external",
+                           "label":  "Sensor Logger",
+                           "sublabel":  "Captura actual · sensores y GPS",
+                           "pos":  [
+                                       40,
+                                       100
+                                   ],
+                           "size":  [
+                                        240,
+                                        80
+                                    ]
+                       },
+                       {
+                           "id":  "notes",
+                           "type":  "frontend",
+                           "label":  "AnotadorVial",
+                           "sublabel":  "Existente · etiquetas manuales",
+                           "pos":  [
+                                       40,
+                                       280
+                                   ],
+                           "size":  [
+                                        240,
+                                        80
+                                    ]
+                       },
+                       {
+                           "id":  "ingest",
+                           "type":  "backend",
+                           "label":  "Importación y sincronización",
+                           "sublabel":  "Propuesto · sesión, tiempos, calidad",
+                           "pos":  [
+                                       460,
+                                       100
+                                   ],
+                           "size":  [
+                                        280,
+                                        80
+                                    ]
+                       },
+                       {
+                           "id":  "raw",
+                           "type":  "database",
+                           "label":  "Archivos originales",
+                           "sublabel":  "Propuesto · ZIP/CSV + hash",
+                           "pos":  [
+                                       880,
+                                       100
+                                   ],
+                           "size":  [
+                                        250,
+                                        80
+                                    ]
+                       },
+                       {
+                           "id":  "core",
+                           "type":  "backend",
+                           "label":  "Procesamiento Python",
+                           "sublabel":  "TripAnalyzer V0 · adaptar integración",
+                           "pos":  [
+                                       460,
+                                       280
+                                   ],
+                           "size":  [
+                                        280,
+                                        80
+                                    ]
+                       },
+                       {
+                           "id":  "db",
+                           "type":  "database",
+                           "label":  "PostgreSQL / PostGIS",
+                           "sublabel":  "Propuesto · datos y resultados",
+                           "pos":  [
+                                       880,
+                                       280
+                                   ],
+                           "size":  [
+                                        250,
+                                        80
+                                    ]
+                       },
+                       {
+                           "id":  "ui",
+                           "type":  "frontend",
+                           "label":  "Panel Streamlit",
+                           "sublabel":  "V0 existente · ampliar consultas",
+                           "pos":  [
+                                       460,
+                                       460
+                                   ],
+                           "size":  [
+                                        280,
+                                        80
+                                    ]
+                       }
+                   ],
+    "connections":  [
+                        {
+                            "from":  "logger",
+                            "to":  "ingest",
+                            "label":  "ZIP manual"
+                        },
+                        {
+                            "from":  "notes",
+                            "to":  "ingest",
+                            "label":  "CSV manual"
+                        },
+                        {
+                            "from":  "ingest",
+                            "to":  "raw",
+                            "label":  "Conservar RAW"
+                        },
+                        {
+                            "from":  "ingest",
+                            "to":  "core",
+                            "label":  "Datos alineados",
+                            "labelDy":  100
+                        },
+                        {
+                            "from":  "core",
+                            "to":  "db",
+                            "label":  "Guardar ejecución"
+                        },
+                        {
+                            "from":  "core",
+                            "to":  "ui",
+                            "label":  "Mapa y resultados",
+                            "labelDy":  100
+                        }
+                    ]
+}

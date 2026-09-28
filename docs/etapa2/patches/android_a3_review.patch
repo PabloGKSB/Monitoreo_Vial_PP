@@ -1,0 +1,34 @@
+*** Begin Patch
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/GpsCollector.kt
+@@
+ import android.os.Bundle
++import android.os.Build
+@@
+         catch (_: IllegalArgumentException) { state = "GPS no disponible" }
++        catch (_: RuntimeException) { state = "Error al registrar GPS" }
+@@
+-            location.isFromMockProvider)
++            if (Build.VERSION.SDK_INT >= 31) location.isMock else location.isFromMockProvider)
+*** Update File: app/src/main/java/com/monitoreovial/anotador/capture/RecordingService.kt
+@@
+             val gpsCount = w?.stats?.get("gps")?.snapshot()?.count ?: 0L
++            val lastFix = gps?.lastFix
++            val lastFixAge = lastFix?.let { ((SystemClock.elapsedRealtimeNanos() - it.timestampNs) / 1e9).coerceAtLeast(0.0) }
++            val lastGpsState = gps?.state ?: gpsInitialState
+@@
+-                .put("gps_available", gpsCount > 0).put("gps_final_state", gps?.state ?: gpsInitialState)
++                .put("gps_available", gpsCount > 0)
++                .put("gps_final_state", if (lastGpsState == "Recibiendo GPS" && (lastFixAge ?: 0.0) > 10.0) "Sin fijación reciente" else lastGpsState)
++                .put("gps_last_fix_age_s", lastFixAge ?: JSONObject.NULL)
++                .put("gps_last_fix_monotonic_ns", lastFix?.timestampNs?.toString() ?: JSONObject.NULL)
+*** Update File: app/src/main/java/com/monitoreovial/anotador/ui/MonitoringApp.kt
+@@
+-                            item { AcquisitionStatus() }
+                             item { Button(onClick = { annotating = true }, enabled = active, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+@@
+                                 Icon(Icons.Default.Close, null); Spacer(Modifier.width(8.dp)); Text(if (active) "Finalizar recorrido" else "Guardando") } }
++                            item { AcquisitionStatus() }
+@@
+-                                    Text("Captura inercial y marcas manuales", style = MaterialTheme.typography.bodyMedium,
++                                    Text("Sensores, GPS y marcas manuales", style = MaterialTheme.typography.bodyMedium,
+*** End Patch

@@ -1,0 +1,45 @@
+{
+  "campaign_id": "piloto_2026_09_25_retraso_2_5",
+  "experiment": {
+    "baseline_manifest": "campana_2026_09_25.json",
+    "changed_parameter": "fixed_delay_seconds",
+    "rationale": "Participant reports marking 2-3 seconds after impact, after stabilization. Use midpoint 2.5 seconds, not a delay selected by test performance.",
+    "scope": "Temporal alignment sensitivity on previously examined data; not independent validation or full episode segmentation"
+  },
+  "capture_context": {
+    "source": "Participant statements and reference photo, 2026-09-26",
+    "same_phone_both_apps": true,
+    "annotation_ui": "Floating overlay over Sensor Logger",
+    "operator": "Passenger (Pablo)",
+    "mount": "Same portrait dashboard-area holder throughout all three trips",
+    "mount_tightness": {"Prieto_Norte": "looser", "Monte_Oscuro": "tighter", "Las_Mariposas": "tighter"},
+    "annotation_semantics": "Retrospective event reference after perceived vehicle stabilization, not impact timestamp",
+    "reported_delay_seconds": [2, 3],
+    "limitations": "Delay and stabilization are self-reported, not measured. Neighboring peaks not confirmed to share a physical cause. Mount stiffness differs by corridor."
+  },
+  "corridors": {
+    "Prieto_Norte": "Prieto_Norte",
+    "Monte_Oscuro": "Monte_Oscuro_Las_Mariposas",
+    "Las_Mariposas": "Monte_Oscuro_Las_Mariposas"
+  },
+  "routes": [
+    {"route_id": "Prieto_Norte", "zip": "Prieto_Norte-2026-09-25_21-38-04.zip", "annotations": "monte_Verde_20260925_183838_234_anotaciones.csv"},
+    {"route_id": "Monte_Oscuro", "zip": "Monte_Oscuro-2026-09-25_21-48-30.zip", "annotations": "monte_Verde_2_20260925_184827_097_anotaciones.csv"},
+    {"route_id": "Las_Mariposas", "zip": "Las_Mariposas-2026-09-25_22-01-43.zip", "annotations": "monte_Verde_3_20260925_190153_148_anotaciones.csv"}
+  ],
+  "parameters": {
+    "window_seconds": 1.5,
+    "fixed_delay_seconds": 2.5,
+    "search_before_seconds": 3.0,
+    "search_after_seconds": 1.0,
+    "normal_exclusion_seconds": 8.0,
+    "normal_ratio": 3,
+    "max_gap_seconds": 0.1,
+    "minimum_coverage": 0.8,
+    "gps_tolerance_seconds": 2.0,
+    "spatial_purge_meters": 50.0,
+    "seed": 42,
+    "forest_trees": 200,
+    "forest_min_leaf": 2
+  }
+}

@@ -1,0 +1,505 @@
+*** Begin Patch
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/ImuSessionWriter.kt
++package com.monitoreovial.anotador.capture
++
++import java.io.File
++import java.io.FileOutputStream
++import java.util.concurrent.ArrayBlockingQueue
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicLong
++
++data class ImuSample(val sensor: String, val timestampNs: Long, val x: Float, val y: Float, val z: Float)
++data class StreamSummary(val count: Long, val hz: Double, val maxGapMs: Double, val gapsOver100Ms: Long, val nonIncreasing: Long)
++
++class StreamStats {
++    private var count = 0L
++    private var first = 0L
++    private var last = 0L
++    private var maxGap = 0L
++    private var gaps = 0L
++    private var nonIncreasing = 0L
++    @Synchronized fun add(time: Long) {
++        if (count == 0L) first = time else {
++            val dt = time - last
++            if (dt <= 0) nonIncreasing++
++            if (dt > 100_000_000L) gaps++
++            maxGap = maxOf(maxGap, dt)
++        }
++        last = time
++        count++
++    }
++    @Synchronized fun snapshot() = StreamSummary(count,
++        if (count > 1 && last > first) (count - 1) * 1e9 / (last - first) else 0.0,
++        maxGap / 1e6, gaps, nonIncreasing)
++}
++
++/** Bounded queue: native sensor callbacks never wait for disk I/O. */
++class ImuSessionWriter(
++    directory: File,
++    private val originNs: Long,
++    private val epochMs: Long,
++    sensorNames: List<String>,
++    capacity: Int = 4096,
++    private val finished: (String?) -> Unit
++) {
++    private val queue = ArrayBlockingQueue<ImuSample>(capacity)
++    private val gate = Any()
++    @Volatile private var accepting = true
++    @Volatile private var finishing = false
++    val dropped = AtomicLong(0)
++    val stats = sensorNames.associateWith { StreamStats() }
++    private val worker = Thread({
++        val streams = mutableMapOf<String, FileOutputStream>()
++        val writers = mutableMapOf<String, java.io.BufferedWriter>()
++        var failure: String? = null
++        try {
++            for (name in sensorNames) {
++                val file = File(directory, "$name.csv")
++                check(file.createNewFile()) { "Sensor file already exists" }
++                val stream = FileOutputStream(file)
++                streams[name] = stream
++                val writer = stream.bufferedWriter(Charsets.UTF_8)
++                writers[name] = writer
++                writer.write("sensor_timestamp_ns,epoch_ms_derived,seconds_elapsed,x,y,z\n")
++                writer.flush()
++            }
++            var lastFlush = System.nanoTime()
++            while (!finishing || queue.isNotEmpty()) {
++                val sample = queue.poll(100, TimeUnit.MILLISECONDS)
++                if (sample != null) {
++                    val delta = sample.timestampNs - originNs
++                    val row = "${sample.timestampNs},${epochMs + delta / 1_000_000L},${delta / 1e9},${sample.x},${sample.y},${sample.z}\n"
++                    writers.getValue(sample.sensor).write(row)
++                    stats.getValue(sample.sensor).add(sample.timestampNs)
++                }
++                if (System.nanoTime() - lastFlush >= 1_000_000_000L) {
++                    writers.values.forEach { it.flush() }
++                    lastFlush = System.nanoTime()
++                }
++            }
++        } catch (error: Exception) {
++            failure = error.message ?: error.javaClass.simpleName
++        } finally {
++            synchronized(gate) { accepting = false; finishing = true }
++            for ((name, stream) in streams) {
++                try { writers[name]?.flush(); stream.fd.sync() }
++                catch (error: Exception) { failure = failure ?: error.message ?: "Flush failed" }
++                try { writers[name]?.close(); stream.close() }
++                catch (error: Exception) { failure = failure ?: error.message ?: "Close failed" }
++            }
++            finished(failure)
++        }
++    }, "imu-csv-writer")
++
++    fun start() = worker.start()
++    fun offer(sample: ImuSample): Boolean = synchronized(gate) {
++        if (!accepting) return false
++        if (queue.offer(sample)) true else { dropped.incrementAndGet(); false }
++    }
++    fun finish() = synchronized(gate) { accepting = false; finishing = true }
++    fun pendingCount(): Int = queue.size
++}
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/CaptureState.kt
++package com.monitoreovial.anotador.capture
++
++import android.content.Context
++import android.content.Intent
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.setValue
++import androidx.core.content.ContextCompat
++import java.io.File
++
++data class CaptureSnapshot(
++    val phase: String = "Sin captura IMU", val busy: Boolean = false,
++    val accel: StreamSummary = StreamSummary(0, 0.0, 0.0, 0, 0),
++    val gyro: StreamSummary = StreamSummary(0, 0.0, 0.0, 0, 0),
++    val gyroAvailable: Boolean = false, val dropped: Long = 0,
++    val error: String? = null, val directory: File? = null
++)
++
++object CaptureState {
++    var snapshot by mutableStateOf(CaptureSnapshot())
++        internal set
++    internal var stopRequested = false
++    internal var service: RecordingService? = null
++    var exporting by mutableStateOf(false)
++        internal set
++
++    fun begin(context: Context, annotations: File) {
++        stopRequested = false
++        snapshot = CaptureSnapshot(phase = "Preparando IMU", busy = true)
++        try {
++            ContextCompat.startForegroundService(context, Intent(context, RecordingService::class.java)
++                .putExtra("annotations", annotations.absolutePath))
++        } catch (error: Exception) {
++            snapshot = CaptureSnapshot(phase = "Error IMU", error = error.message ?: "No se pudo iniciar captura")
++        }
++    }
++    fun finish() {
++        stopRequested = true
++        if (snapshot.busy) snapshot = snapshot.copy(phase = "Guardando IMU")
++        service?.finishCapture()
++    }
++}
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/RecordingService.kt
++package com.monitoreovial.anotador.capture
++
++import android.app.*
++import android.content.Intent
++import android.content.pm.ServiceInfo
++import android.hardware.*
++import android.os.*
++import androidx.core.app.NotificationCompat
++import com.monitoreovial.anotador.MainActivity
++import org.json.JSONObject
++import java.io.File
++import java.util.concurrent.atomic.AtomicBoolean
++
++class RecordingService : Service(), SensorEventListener {
++    private val main = Handler(Looper.getMainLooper())
++    private lateinit var thread: HandlerThread
++    private lateinit var collector: Handler
++    private lateinit var manager: SensorManager
++    @Volatile private var writer: ImuSessionWriter? = null
++    private var directory: File? = null
++    private var metadata = JSONObject()
++    private val closing = AtomicBoolean(false)
++    private val completed = AtomicBoolean(false)
++    @Volatile private var destroyed = false
++    private var started = false
++    private var gyroAvailable = false
++    @Volatile private var terminalError: String? = null
++    private val ticker = object : Runnable {
++        override fun run() {
++            publish()
++            if (CaptureState.snapshot.busy) main.postDelayed(this, 500)
++        }
++    }
++
++    override fun onCreate() {
++        super.onCreate()
++        manager = getSystemService(SENSOR_SERVICE) as SensorManager
++        thread = HandlerThread("imu-collector").also { it.start() }
++        collector = Handler(thread.looper)
++        val notifications = getSystemService(NotificationManager::class.java)
++        notifications.createNotificationChannel(NotificationChannel("imu_capture", "Captura de sensores", NotificationManager.IMPORTANCE_LOW))
++        val open = PendingIntent.getActivity(this, 20, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
++        val notification = NotificationCompat.Builder(this, "imu_capture")
++            .setSmallIcon(android.R.drawable.ic_menu_compass).setContentTitle("Captura IMU activa")
++            .setContentText("Acelerometro y giroscopio; sin GPS").setContentIntent(open).setOngoing(true).build()
++        if (Build.VERSION.SDK_INT >= 34) startForeground(2002, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
++        else startForeground(2002, notification)
++        CaptureState.service = this
++    }
++
++    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
++        if (started) return START_NOT_STICKY
++        started = true
++        val path = intent?.getStringExtra("annotations")
++        collector.post {
++            try {
++                require(path != null) { "Missing annotation session" }
++                val annotationFile = File(path)
++                val allowed = getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!.canonicalFile
++                require(annotationFile.canonicalFile.parentFile == allowed && annotationFile.isFile) { "Invalid session path" }
++                val folder = File(allowed, annotationFile.nameWithoutExtension + "_imu")
++                check(folder.mkdir()) { "Capture folder exists or cannot be created" }
++                directory = folder
++                val acceleration = manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
++                    ?: error("Acelerometro no disponible")
++                val gyro = manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
++                gyroAvailable = gyro != null
++                val origin = SystemClock.elapsedRealtimeNanos()
++                val epoch = System.currentTimeMillis()
++                metadata = JSONObject().put("schema_version", "imu-preview-1")
++                    .put("state", "RECORDING").put("annotations_file", annotationFile.name)
++                    .put("origin_monotonic_ns", origin.toString()).put("origin_epoch_ms", epoch)
++                    .put("requested_period_us", 10000).put("gps_available", false)
++                    .put("accelerometer_semantics", "TYPE_ACCELEROMETER includes gravity, m/s2, device axes")
++                    .put("gyroscope_semantics", "TYPE_GYROSCOPE rad/s, device axes")
++                    .put("accelerometer_name", acceleration.name).put("gyroscope_name", gyro?.name ?: JSONObject.NULL)
++                    .put("device", Build.MODEL).put("android", Build.VERSION.RELEASE)
++                    .put("annotation_semantics", "Retrospective button reference; not impact time")
++                    .put("haptic_feedback_during_capture", false)
++                writeMetadata()
++                val names = if (gyroAvailable) listOf("accelerometer", "gyroscope") else listOf("accelerometer")
++                writer = ImuSessionWriter(folder, origin, epoch, names) { error -> collector.post { complete(error) } }
++                writer!!.start()
++                check(manager.registerListener(this, acceleration, 10000, collector)) { "No se pudo registrar acelerometro" }
++                if (gyro != null) check(manager.registerListener(this, gyro, 10000, collector)) { "No se pudo registrar giroscopio" }
++                main.post { CaptureState.snapshot = CaptureState.snapshot.copy(phase = "Capturando IMU", directory = folder, gyroAvailable = gyroAvailable); main.post(ticker) }
++                main.post { if (CaptureState.stopRequested) finishCapture() }
++            } catch (error: Exception) {
++                terminalError = error.message ?: error.javaClass.simpleName
++                manager.unregisterListener(this)
++                closing.set(true)
++                if (writer != null) writer!!.finish() else complete(terminalError)
++            }
++        }
++        return START_NOT_STICKY
++    }
++
++    override fun onSensorChanged(event: SensorEvent) {
++        if (closing.get()) return
++        val name = when (event.sensor.type) {
++            Sensor.TYPE_ACCELEROMETER -> "accelerometer"
++            Sensor.TYPE_GYROSCOPE -> "gyroscope"
++            else -> return
++        }
++        writer?.offer(ImuSample(name, event.timestamp, event.values[0], event.values[1], event.values[2]))
++    }
++    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
++
++    fun finishCapture() {
++        if (!closing.compareAndSet(false, true)) return
++        collector.post {
++            manager.unregisterListener(this)
++            writer?.finish()
++        }
++    }
++
++    private fun publish() {
++        val empty = StreamSummary(0, 0.0, 0.0, 0, 0)
++        CaptureState.snapshot = CaptureState.snapshot.copy(
++            accel = writer?.stats?.get("accelerometer")?.snapshot() ?: empty,
++            gyro = writer?.stats?.get("gyroscope")?.snapshot() ?: empty,
++            dropped = writer?.dropped?.get() ?: 0)
++    }
++
++    private fun complete(error: String?) {
++        if (!completed.compareAndSet(false, true)) return
++        closing.set(true)
++        terminalError = terminalError ?: error
++        manager.unregisterListener(this)
++        try {
++            val w = writer
++            if (w != null && w.stats.getValue("accelerometer").snapshot().count == 0L)
++                terminalError = terminalError ?: "No se recibieron muestras de acelerometro"
++            metadata.put("state", if (terminalError == null) "COMPLETED" else "INCOMPLETE")
++                .put("error", terminalError ?: JSONObject.NULL)
++                .put("queue_dropped", w?.dropped?.get() ?: 0)
++                .put("pending_unwritten", w?.pendingCount() ?: 0)
++            for ((name, stats) in w?.stats.orEmpty()) {
++                val s = stats.snapshot()
++                metadata.put(name + "_quality", JSONObject().put("samples", s.count).put("effective_hz", s.hz)
++                    .put("max_gap_ms", s.maxGapMs).put("gaps_over_100ms", s.gapsOver100Ms).put("non_increasing", s.nonIncreasing))
++            }
++            writeMetadata()
++        } catch (problem: Exception) { terminalError = terminalError ?: problem.message ?: "Metadata failure" }
++        main.post {
++            main.removeCallbacks(ticker)
++            publish()
++            CaptureState.snapshot = CaptureState.snapshot.copy(busy = !destroyed, directory = directory,
++                phase = if (terminalError == null) "IMU guardada" else "IMU incompleta", error = terminalError)
++            stopForeground(STOP_FOREGROUND_REMOVE)
++            stopSelf()
++            if (destroyed) thread.quitSafely()
++        }
++    }
++    private fun writeMetadata() {
++        val dir = directory ?: return
++        val tmp = File(dir, "metadata.json.tmp")
++        tmp.writeText(metadata.toString(2), Charsets.UTF_8)
++        java.nio.file.Files.move(tmp.toPath(), File(dir, "metadata.json").toPath(),
++            java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
++    }
++    override fun onDestroy() {
++        destroyed = true
++        main.removeCallbacks(ticker)
++        if (!completed.get()) { terminalError = "Servicio interrumpido"; finishCapture() }
++        else {
++            CaptureState.snapshot = CaptureState.snapshot.copy(busy = false)
++            thread.quitSafely()
++        }
++        if (CaptureState.service === this) CaptureState.service = null
++        super.onDestroy()
++    }
++    override fun onBind(intent: Intent?): IBinder? = null
++}
+*** Add File: app/src/main/java/com/monitoreovial/anotador/capture/CapturePanel.kt
++package com.monitoreovial.anotador.capture
++
++import android.content.ClipData
++import android.content.Intent
++import android.os.Handler
++import android.os.Looper
++import androidx.compose.foundation.layout.Column
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.unit.sp
++import androidx.core.content.FileProvider
++import com.monitoreovial.anotador.SesionActual
++import java.io.File
++import java.util.Locale
++import java.util.zip.ZipEntry
++import java.util.zip.ZipOutputStream
++
++@Composable fun CapturePanel() {
++    val s = CaptureState.snapshot
++    val context = LocalContext.current
++    Column {
++        Text(s.phase + " (sin GPS)", fontSize = 13.sp)
++        Text(String.format(Locale.US, "Acc: %d / %.1f Hz | Giro: %s", s.accel.count, s.accel.hz,
++            if (s.gyroAvailable) "${s.gyro.count} / %.1f Hz".format(Locale.US, s.gyro.hz) else "no disponible"), fontSize = 12.sp)
++        if (s.dropped > 0) Text("Muestras descartadas por cola llena: ${s.dropped}", fontSize = 12.sp)
++        s.error?.let { Text(it, fontSize = 12.sp) }
++        if (!s.busy && !SesionActual.activa && s.directory != null) {
++            OutlinedButton(enabled = !CaptureState.exporting, onClick = {
++                val annotations = SesionActual.archivo ?: return@OutlinedButton
++                CaptureState.exporting = true
++                Thread({
++                    var output: File? = null
++                    var failure: String? = null
++                    try {
++                        val zip = File(s.directory.parentFile, "${s.directory.name}_${System.currentTimeMillis()}.zip")
++                        output = zip
++                        ZipOutputStream(zip.outputStream().buffered()).use { stream ->
++                            val inputs = s.directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") }.orEmpty() + annotations
++                            for (file in inputs) {
++                                stream.putNextEntry(ZipEntry(file.name))
++                                file.inputStream().use { it.copyTo(stream) }
++                                stream.closeEntry()
++                            }
++                        }
++                    } catch (error: Exception) { failure = error.message ?: "Error de exportacion"; output?.delete() }
++                    Handler(Looper.getMainLooper()).post {
++                        CaptureState.exporting = false
++                        try {
++                            if (failure != null) error(failure!!)
++                            val uri = FileProvider.getUriForFile(context, "com.monitoreovial.anotador.fileprovider", output!!)
++                            val intent = Intent(Intent.ACTION_SEND).setType("application/zip")
++                                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++                            intent.clipData = ClipData.newUri(context.contentResolver, "Captura IMU", uri)
++                            context.startActivity(Intent.createChooser(intent, "Compartir captura IMU"))
++                        } catch (error: Exception) {
++                            CaptureState.snapshot = CaptureState.snapshot.copy(error = error.message ?: "No se pudo compartir")
++                        }
++                    }
++                }, "imu-export").start()
++            }) { Text(if (CaptureState.exporting) "Preparando ZIP" else "COMPARTIR CAPTURA IMU") }
++        }
++    }
++}
+*** Update File: app/src/main/AndroidManifest.xml
+@@
+         <!-- BURBUJA -->
++        <service android:name=".capture.RecordingService" android:exported="false"
++            android:stopWithTask="false" android:foregroundServiceType="specialUse">
++            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
++                android:value="User initiated offline inertial sensor recording for road research" />
++        </service>
+*** Update File: app/src/main/java/com/monitoreovial/anotador/MainActivity.kt
+@@
+ import com.monitoreovial.anotador.storage.AnnotationCsvStore
++import com.monitoreovial.anotador.capture.CaptureState
++import com.monitoreovial.anotador.capture.CapturePanel
+@@
+ fun PantallaRecorrido(
+@@
+-        Text(
+-            text =
+-                "MONITOREO ACTIVO",
++        CapturePanel()
++        Text(
++            text =
++                "MONITOREO ACTIVO",
+@@
+ fun PantallaFinal(
+@@
+-        Text(
+-            text =
+-                "MONITOREO FINALIZADO",
++        CapturePanel()
++        Text(
++            text =
++                "MONITOREO FINALIZADO",
+@@
+ fun iniciarNuevaSesion(
+@@
+ ): Boolean {
++    if (CaptureState.snapshot.busy || CaptureState.exporting) return false
+@@
+-    return true
+-}
+-
+-
+-// ======================================================
+-// FINALIZAR SESIÓN
++    CaptureState.begin(context.applicationContext, archivo)
++    return true
++}
++
++
++// ======================================================
++// FINALIZAR SESIÓN
+@@
+     SesionActual.finalizada =
+         true
++    CaptureState.finish()
+@@
+ fun vibrar(
+@@
+ ) {
++    if (CaptureState.snapshot.busy) return
+*** Add File: app/src/test/java/com/monitoreovial/anotador/ImuWriterTest.kt
++package com.monitoreovial.anotador
++
++import com.monitoreovial.anotador.capture.*
++import org.junit.Assert.*
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import java.io.File
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++
++class ImuWriterTest {
++    @get:Rule val tmp = TemporaryFolder()
++    @Test fun drainsQueueAndKeepsNativeTimes() {
++        val done = CountDownLatch(1)
++        var failure: String? = "not finished"
++        val writer = ImuSessionWriter(tmp.root, 1_000_000_000L, 2000L, listOf("accelerometer")) { failure = it; done.countDown() }
++        writer.start()
++        assertTrue(writer.offer(ImuSample("accelerometer", 1_010_000_000L, 1f, 2f, 3f)))
++        writer.finish()
++        assertTrue(done.await(5, TimeUnit.SECONDS))
++        assertNull(failure)
++        val lines = File(tmp.root, "accelerometer.csv").readLines()
++        assertEquals(2, lines.size)
++        assertEquals("1010000000,2010,0.01,1.0,2.0,3.0", lines[1])
++        assertFalse(writer.offer(ImuSample("accelerometer", 2L, 0f, 0f, 0f)))
++    }
++    @Test fun queueIsBoundedAndReportsLoss() {
++        val done = CountDownLatch(1)
++        val writer = ImuSessionWriter(tmp.root, 0, 0, listOf("accelerometer"), 1) { done.countDown() }
++        assertTrue(writer.offer(ImuSample("accelerometer", 1L, 0f, 0f, 0f)))
++        assertFalse(writer.offer(ImuSample("accelerometer", 2L, 0f, 0f, 0f)))
++        assertEquals(1L, writer.dropped.get())
++        writer.finish(); writer.start()
++        assertTrue(done.await(5, TimeUnit.SECONDS))
++        assertEquals(1L, writer.stats.getValue("accelerometer").snapshot().count)
++    }
++    @Test fun qualityUsesActualIntervals() {
++        val stats = StreamStats()
++        listOf(0L, 10_000_000L, 20_000_000L, 220_000_000L).forEach { stats.add(it) }
++        val s = stats.snapshot()
++        assertEquals(4L, s.count)
++        assertEquals(3.0 / .22, s.hz, .00001)
++        assertEquals(200.0, s.maxGapMs, .001)
++        assertEquals(1L, s.gapsOver100Ms)
++    }
++    @Test fun storageFailureIsReportedWithoutReplacingOldSensorFile() {
++        val original = File(tmp.root, "accelerometer.csv").apply { writeText("old") }
++        val done = CountDownLatch(1)
++        var failure: String? = null
++        val writer = ImuSessionWriter(tmp.root, 0, 0, listOf("accelerometer")) { failure = it; done.countDown() }
++        writer.start()
++        assertTrue(done.await(5, TimeUnit.SECONDS))
++        assertNotNull(failure)
++        assertEquals("old", original.readText())
++    }
++}
+*** End Patch
