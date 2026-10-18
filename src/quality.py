@@ -69,10 +69,13 @@ def assess_sensor(sensor: str, frame: pd.DataFrame, config: AnalysisConfig) -> S
     if count == 0 or "seconds_elapsed" not in frame:
         return SensorQuality(sensor, QualityStatus.INVALID, count, issues=["No timed records"])
 
-    elapsed = pd.to_numeric(frame["seconds_elapsed"], errors="coerce").dropna().to_numpy(float)
+    times = pd.to_numeric(frame["seconds_elapsed"], errors="coerce")
+    elapsed = times[np.isfinite(times)].to_numpy(float)
     if elapsed.size < 2:
         return SensorQuality(sensor, QualityStatus.INVALID, count, issues=["Fewer than two timed records"])
     deltas = np.diff(elapsed)
+    if np.any(deltas <= 0):
+        return SensorQuality(sensor, QualityStatus.INVALID, count, issues=["Non-increasing timestamps"])
     positive = deltas[deltas > 0]
     if positive.size == 0:
         return SensorQuality(sensor, QualityStatus.INVALID, count, issues=["Timestamps do not advance"])
@@ -93,6 +96,9 @@ def assess_sensor(sensor: str, frame: pd.DataFrame, config: AnalysisConfig) -> S
     if irregular_ratio > 0.1:
         status = QualityStatus.WARNING
         issues.append("Irregular sampling intervals")
+    if len(elapsed) != count:
+        status = QualityStatus.WARNING
+        issues.append("Non-finite timestamps excluded")
 
     result = SensorQuality(
         sensor=sensor,
@@ -108,6 +114,16 @@ def assess_sensor(sensor: str, frame: pd.DataFrame, config: AnalysisConfig) -> S
     )
     if sensor == "gps":
         _assess_gps(frame, result)
+    if sensor == "accelerometer" and {"x", "y", "z"} <= set(frame):
+        axes = frame[["x", "y", "z"]].apply(pd.to_numeric, errors="coerce")
+        usable = np.isfinite(axes.to_numpy(float)).all(axis=1) & np.isfinite(times)
+        result.metrics["unusable_signal_records"] = int((~usable).sum())
+        if not usable.all():
+            result.status = QualityStatus.WARNING
+            result.issues.append("Non-finite acceleration records excluded")
+        if usable.sum() < 2 or (~usable).sum() * 2 >= count:
+            result.status = QualityStatus.INVALID
+            result.issues.append("Insufficient usable acceleration records")
     return result
 
 
@@ -134,7 +150,7 @@ def _assess_gps(frame: pd.DataFrame, result: SensorQuality) -> None:
     if missing or invalid:
         result.status = QualityStatus.WARNING
         result.issues.append(f"{missing + invalid} missing or invalid coordinate record(s)")
-    if missing + invalid >= max(1, len(frame) // 2):
+    if (missing + invalid) * 2 >= len(frame):
         result.status = QualityStatus.INVALID
         result.issues.append("At least half of GPS coordinates are unusable")
 
@@ -158,6 +174,15 @@ def assess_trip(trip: TripData, config: AnalysisConfig | None = None) -> Quality
     else:
         overall = QualityStatus.OK
         summary = "TRIP USABLE"
+
+    if trip.metadata and (trip.metadata.get("queue_dropped", 0)
+                          or trip.metadata.get("quality_warnings")
+                          or trip.metadata.get("state") != "COMPLETED"
+                          or trip.metadata.get("error")
+                          or trip.metadata.get("pending_unwritten", 0)):
+        if overall == QualityStatus.OK:
+            overall = QualityStatus.WARNING
+            summary = "TRIP USABLE WITH CAPTURE WARNINGS"
 
     timestamps = [
         value

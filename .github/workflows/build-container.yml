@@ -1,0 +1,88 @@
+name: Validate container
+
+# Builds and checks a disposable image. Never deploys or publishes an image.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - requirements-server.lock
+      - requirements-maintenance.lock
+      - run_server.py
+      - src/**
+      - web/**
+      - scripts/**
+      - deploy/**
+      - .github/workflows/build-container.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      source:
+        image: postgis/postgis:17-3.6
+        env:
+          POSTGRES_PASSWORD: recovery-source-fixture
+          POSTGRES_DB: vial_restore_source
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vial_restore_source"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      target:
+        image: postgis/postgis:17-3.6
+        env:
+          POSTGRES_PASSWORD: recovery-target-fixture
+          POSTGRES_DB: vial_restore_target
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vial_restore_target"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Install pinned runtime and administrative check dependencies
+        run: |
+          python3 -m venv .api_local/recovery-env
+          .api_local/recovery-env/bin/python -m pip install --require-hashes -r requirements-server.lock -r requirements-maintenance.lock
+      - name: Migrate, back up and recover synthetic data in isolated PostGIS
+        env:
+          # Local disposable service credentials, never a Supabase connection.
+          VIAL_RECOVERY_SOURCE_DATABASE_URL: postgresql+psycopg://postgres:recovery-source-fixture@127.0.0.1:5433/vial_restore_source
+          VIAL_RECOVERY_TARGET_DATABASE_URL: postgresql+psycopg://postgres:recovery-target-fixture@127.0.0.1:5434/vial_restore_target
+        run: .api_local/recovery-env/bin/python -m scripts.check_postgres_recovery
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prepare the explicit source package
+        run: python3 scripts/prepare_release.py
+      - name: Build Linux amd64 image without production secrets
+        run: docker build --platform linux/amd64 --tag monitoreo-vial:review .
+      - name: Check isolated runtime with synthetic data
+        run: |
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,uid=10001,gid=10001 \
+            --mount "type=bind,source=$PWD/scripts/check_container_image.py,target=/tmp/check_container_image.py,readonly" \
+            --entrypoint python monitoreo-vial:review /tmp/check_container_image.py
+      - name: Record image identity
+        run: |
+          docker image inspect monitoreo-vial:review --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+          echo 'Linux image and synthetic runtime checked without network access. Production entrypoint, PostgreSQL TLS, persistent volume and recovery remain pending.' >> "$GITHUB_STEP_SUMMARY"

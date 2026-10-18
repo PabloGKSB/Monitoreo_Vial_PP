@@ -29,20 +29,21 @@ def segment_trip(
     if gps.empty:
         return pd.DataFrame(columns=columns)
     windows_geo = associate_gps(window_features, gps, config)
-    events_geo = events if "route_distance_m" in events else associate_gps(events, gps, config)
+    events_geo = events if {"route_distance_m", "gps_route_part"} <= set(events) else associate_gps(events, gps, config)
     max_distance = float(gps["route_distance_m"].max())
     segment_count = max(1, int(np.floor(max_distance / config.road_segment_meters)) + 1)
     rows: list[dict[str, object]] = []
-    for index in range(segment_count):
+    groups = [(index, part) for index in range(segment_count) for part in gps.route_part.unique()]
+    for index, part in groups:
         start = index * config.road_segment_meters
         end = start + config.road_segment_meters
-        gps_part = gps[(gps["route_distance_m"] >= start) & (gps["route_distance_m"] < end)]
-        window_part = windows_geo[(windows_geo["route_distance_m"] >= start) & (windows_geo["route_distance_m"] < end)]
-        event_part = events_geo[(events_geo["route_distance_m"] >= start) & (events_geo["route_distance_m"] < end)]
+        gps_part = gps[(gps["route_distance_m"] >= start) & (gps["route_distance_m"] < end) & (gps.route_part == part)]
+        window_part = windows_geo[(windows_geo["route_distance_m"] >= start) & (windows_geo["route_distance_m"] < end) & (windows_geo.gps_route_part == part)]
+        event_part = events_geo[(events_geo["route_distance_m"] >= start) & (events_geo["route_distance_m"] < end) & (events_geo.gps_route_part == part)]
         if gps_part.empty:
             continue
         rows.append({
-            "segment_id": f"SEG-{index + 1:04d}",
+            "segment_id": f"SEG-{index + 1:04d}-P{int(part)}",
             "start_distance_m": start,
             "end_distance_m": min(end, max_distance),
             "start_latitude": float(gps_part.iloc[0]["latitude"]),

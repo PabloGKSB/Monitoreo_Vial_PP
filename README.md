@@ -26,6 +26,22 @@ streamlit run app.py
 
 La interfaz permite elegir un ZIP existente, subir otro, cambiar el umbral experimental y la longitud de segmento, revisar la calidad de sensores, filtrar eventos y observar 5 segundos antes y despues de cada deteccion.
 
+### Cliente central con cuentas
+
+Con `requirements-api.txt` instalado y la configuracion privada `.env` preparada:
+
+```powershell
+npm.cmd --prefix web ci --ignore-scripts
+npm.cmd --prefix web run build
+.\.venv\Scripts\python.exe run_api.py --central --env-file .env --port 8001
+```
+
+Abrir `http://127.0.0.1:8001` para iniciar sesion con Supabase, cargar ZIP y
+consultar historial, calidad, mapa y original propios. El cliente central ofrece
+inspeccion; no habilita deteccion automatica nativa. Ver la
+[validacion con dos cuentas reales](docs/etapa3/VALIDACION_CUENTAS_CLIENTE.md)
+y la [preparacion de despliegue](deploy/README.md).
+
 ## Datos y resultados
 
 Coloque los recorridos originales en `data/raw/*.zip`. Durante la transicion, la interfaz tambien descubre los ZIP existentes en `Data/`. El loader lee los CSV directamente desde el ZIP y nunca extrae, modifica ni sobrescribe datos RAW.
@@ -42,7 +58,7 @@ Cada analisis genera:
 
 ## Arquitectura
 
-`app.py` contiene solo presentacion. `src/analyzer.py` expone `TripAnalyzer`, fachada reutilizable por Streamlit y por una futura API.
+`app.py` contiene solo presentacion. `src/analyzer.py` expone `TripAnalyzer`, fachada reutilizable por Streamlit. La API central de inspeccion utiliza los lectores y las reglas de calidad compartidos.
 
 ```text
 Streamlit
@@ -114,6 +130,12 @@ Instalar `requirements-pilot.txt` para ejecutarlo y habilitar sus pruebas;
 sin scikit-learn las pruebas del piloto se omiten.
 
 ## Ejecucion de pruebas
+
+La suite completa incluye API, persistencia y autenticacion. Instalar tambien
+`requirements-api.txt` para esas dependencias. La preparacion de Etapa 3,
+politica de calidad y conexion Supabase se describen en
+[docs/etapa3/README.md](docs/etapa3/README.md). La prueba PostGIS real se omite
+sin una base de pruebas configurada; no se sustituye por SQLite en produccion.
 
 Si Windows muestra `PermissionError: [WinError 5]` en `pytest-of-GOMEPAB`
 o `.pytest_cache`, ejecutar desde la raiz del proyecto:

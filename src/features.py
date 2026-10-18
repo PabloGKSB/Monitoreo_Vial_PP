@@ -70,6 +70,14 @@ def extract_window_features(
     config = config or AnalysisConfig()
     if processed.empty:
         return pd.DataFrame()
+    if "signal_block" in processed:
+        pieces = []
+        for block, rows in processed.groupby("signal_block", sort=True):
+            features = extract_window_features(rows.drop(columns="signal_block"), config)
+            if not features.empty:
+                features["signal_block"] = int(block)
+                pieces.append(features)
+        return pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame()
     step = config.window_seconds * (1.0 - config.window_overlap)
     first = float(processed["seconds_elapsed"].min())
     last = float(processed["seconds_elapsed"].max())
@@ -78,6 +86,8 @@ def extract_window_features(
     elapsed = processed["seconds_elapsed"]
     for start in starts:
         end = start + config.window_seconds
+        if end > last + 1e-9:
+            continue
         window = processed[(elapsed >= start) & (elapsed < end)]
         if len(window) >= config.minimum_samples_per_window:
             rows.append(_window_features(window, float(start), float(end)))

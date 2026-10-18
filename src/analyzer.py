@@ -15,6 +15,7 @@ from .features import extract_window_features
 from .gps import associate_gps, prepare_gps, route_summary
 from .loader import TripData, load_trip
 from .preprocessing import PreprocessingInfo, preprocess_accelerometer
+from .processing_policy import processing_policy
 from .quality import QualityReport, assess_trip
 from .segmentation import segment_trip
 
@@ -31,7 +32,7 @@ class AnalysisResult:
     events: pd.DataFrame
     gps: pd.DataFrame
     segments: pd.DataFrame
-    summary: dict[str, float | int | str]
+    summary: dict[str, object]
     config: AnalysisConfig
 
 
@@ -44,22 +45,53 @@ class TripAnalyzer:
     def analyze(self, zip_path: str | Path) -> AnalysisResult:
         trip = load_trip(zip_path)
         quality = assess_trip(trip, self.config)
+        policy = processing_policy(trip, quality)
+        native = trip.metadata.get("schema_version") == "capture-preview-2"
+        if not policy["detection_allowed"]:
+            # Inspection does not classify road condition from unvalidated native signals.
+            events = associate_gps(detect_events(pd.DataFrame(), self.config), trip.sensors["gps"], self.config)
+            events.insert(1, "trip_id", trip.trip_id)
+            gps = prepare_gps(trip.sensors["gps"])
+            summary = {"trip_id": trip.trip_id, "duration_seconds": quality.duration_seconds,
+                       **route_summary(gps), "event_count": None,
+                       "quality_status": quality.overall_status.value,
+                       "analysis_mode": "native_inspection" if native else "quality_inspection",
+                       "detection_status": "BLOCKED_INVALID" if "INVALID_REQUIRED_DATA" in policy["reasons"] else "NOT_EVALUATED",
+                       "processing_policy": policy}
+            return AnalysisResult(trip, quality, pd.DataFrame(),
+                                  PreprocessingInfo(0.0, "not processed: inspection", 0.0),
+                                  pd.DataFrame(), events, gps, pd.DataFrame(), summary, self.config)
         processed, preprocessing_info = preprocess_accelerometer(trip.sensors["accelerometer"], self.config)
         features = extract_window_features(processed, self.config)
-        scored_features = score_windows(features, self.config)
+        gps = prepare_gps(trip.sensors["gps"])
+        candidates = len(features)
+        if not features.empty:
+            features["gps_route_part"] = -1
+            for part, fixes in gps.groupby("route_part"):
+                covered = ((features.window_start >= fixes.seconds_elapsed.min())
+                           & (features.window_end <= fixes.seconds_elapsed.max()))
+                features.loc[covered, "gps_route_part"] = int(part)
+            features = features.loc[features.gps_route_part >= 0].reset_index(drop=True)
+        evaluated = len(features) >= self.config.detector_min_baseline_windows
+        scored_features = score_windows(features, self.config) if evaluated else features
         events = detect_events(features, self.config)
         events.insert(1, "trip_id", trip.trip_id)
         events = associate_gps(events, trip.sensors["gps"], self.config)
-        gps = prepare_gps(trip.sensors["gps"])
-        segments = segment_trip(gps, scored_features, events, self.config)
+        segments = segment_trip(gps, scored_features, events, self.config) if evaluated else pd.DataFrame()
         route = route_summary(gps)
-        summary: dict[str, float | int | str] = {
+        if not evaluated:
+            policy = {**policy, "detection_allowed": False, "reasons": ["INSUFFICIENT_ELIGIBLE_WINDOWS"]}
+        summary: dict[str, object] = {
             "trip_id": trip.trip_id,
             "duration_seconds": quality.duration_seconds,
             "distance_km": route["distance_km"],
             "mean_speed_kmh": route["mean_speed_kmh"],
-            "event_count": len(events),
+            "event_count": len(events) if evaluated else None,
             "quality_status": quality.overall_status.value,
+            "analysis_mode": "experimental_detection" if evaluated else "quality_inspection",
+            "detection_status": "EVALUATED" if evaluated else "NOT_EVALUATED",
+            "processing_policy": policy,
+            "candidate_window_count": candidates, "eligible_window_count": len(features),
         }
         return AnalysisResult(
             trip, quality, processed, preprocessing_info, scored_features,
@@ -85,6 +117,8 @@ class TripAnalyzer:
         report_path = directories["reports"] / f"{result.trip.trip_id}_analisis.json"
         payload = {
             "summary": result.summary,
+            "capture_metadata": result.trip.metadata,
+            "loader_warnings": result.trip.warnings,
             "quality": result.quality.to_dict(),
             "preprocessing": {
                 "sampling_hz": result.preprocessing_info.sampling_hz,

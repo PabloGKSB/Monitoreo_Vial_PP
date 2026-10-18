@@ -66,7 +66,11 @@ def detect_events(features: pd.DataFrame, config: AnalysisConfig | None = None) 
     if anomalies.empty:
         return pd.DataFrame(columns=columns)
 
-    groups = (anomalies["window_start"].diff().fillna(0) > config.event_merge_seconds).cumsum()
+    boundaries = anomalies["window_start"].diff().fillna(0) > config.event_merge_seconds
+    for column in ("signal_block", "gps_route_part"):
+        if column in anomalies:
+            boundaries |= anomalies[column].ne(anomalies[column].shift())
+    groups = boundaries.cumsum()
     events: list[dict[str, object]] = []
     for event_number, (_, group) in enumerate(anomalies.groupby(groups), start=1):
         peak_row = group.loc[group["event_score"].idxmax()]

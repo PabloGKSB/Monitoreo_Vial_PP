@@ -38,7 +38,7 @@ def _filter(values: np.ndarray, cutoff_hz: float, sampling_hz: float, kind: str)
         return values.copy()
 
 
-def preprocess_accelerometer(
+def _preprocess_block(
     frame: pd.DataFrame, config: AnalysisConfig | None = None
 ) -> tuple[pd.DataFrame, PreprocessingInfo]:
     """Compute raw magnitude, dynamic magnitude, smoothing and jerk.
@@ -81,4 +81,43 @@ def preprocess_accelerometer(
     result["smoothed_magnitude"] = smoothed
     result["jerk"] = jerk
     return result, PreprocessingInfo(sampling_hz, gravity_method, median_magnitude)
+
+
+def preprocess_accelerometer(
+    frame: pd.DataFrame, config: AnalysisConfig | None = None
+) -> tuple[pd.DataFrame, PreprocessingInfo]:
+    """Filter independent continuous blocks; never fill missing samples."""
+    config = config or AnalysisConfig()
+    required = ["seconds_elapsed", "x", "y", "z"]
+    missing = set(required) - set(frame)
+    if missing:
+        raise ValueError("Accelerometer missing columns: " + ", ".join(sorted(missing)))
+    values = frame[required].apply(pd.to_numeric, errors="coerce")
+    usable = np.isfinite(values.to_numpy(float)).all(axis=1)
+    valid = frame.loc[usable].copy()
+    valid[required] = values.loc[usable]
+    if len(valid) < 2:
+        return pd.DataFrame(), PreprocessingInfo(0.0, "no usable blocks", 0.0)
+    times = valid.seconds_elapsed.to_numpy(float)
+    delta = np.diff(times)
+    if np.any(delta <= 0):
+        raise ValueError("Accelerometer timestamps must be strictly increasing")
+    limit = max(config.minimum_gap_seconds, config.gap_factor * float(np.median(delta)))
+    positions = np.flatnonzero(usable)
+    breaks = (delta > limit) | (np.diff(positions) > 1)
+    valid["signal_block"] = np.r_[0, breaks.cumsum()]
+    pieces, infos = [], []
+    for block, rows in valid.groupby("signal_block", sort=True):
+        if len(rows) < config.minimum_samples_per_window:
+            continue
+        processed, info = _preprocess_block(rows, config)
+        processed["signal_block"] = int(block)
+        pieces.append(processed)
+        infos.append(info)
+    if not pieces:
+        return pd.DataFrame(), PreprocessingInfo(0.0, "no usable blocks", 0.0)
+    methods = sorted({info.gravity_compensation for info in infos})
+    return pd.concat(pieces, ignore_index=True), PreprocessingInfo(
+        float(np.median([info.sampling_hz for info in infos])), "; ".join(methods),
+        float(np.median([info.median_raw_magnitude for info in infos])))
 
