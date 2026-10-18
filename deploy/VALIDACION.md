@@ -57,9 +57,27 @@ Comprueba Python 3.12, ausencia de Node y archivos privados, cliente compilado,
 CA publica y arranque de la API con SQLite sintetico: /health 200, frontend
 200 y recurso privado sin token 401. La imagen no se publica en un registro.
 
-Ejecucion remota pendiente: la rama de validacion esta preparada localmente,
-pero la subida al repositorio publico requiere autorizacion explicita sobre
-el contenido. No se subio ni se ejecuto GitHub Actions.
+El usuario autorizo la subida publica y la apertura del PR. Rama
+`codex/validacion-despliegue`, [PR #1 en borrador](https://github.com/PabloGKSB/Monitoreo_Vial_PP/pull/1),
+sin fusionar a main ni publicar en Railway.
+
+[Ejecucion 39154037300](https://github.com/PabloGKSB/Monitoreo_Vial_PP/actions/runs/39154037300):
+**success**, con todos los pasos aprobados sobre el codigo del commit
+`5873396deb7682d01d6e0f84b7c9666db07a74b6` (checkout del merge temporal del PR).
+El resultado del proceso dentro del contenedor fue:
+
+```json
+{"checks":{"health":200,"frontend":200,"unauthenticated":401},"uid":10001,"runtime_node":false,"backend":"isolated-synthetic-sqlite","network":"none","production_entrypoint_checked":false,"production_validated":false}
+```
+
+Plataforma `linux/amd64`. ID local de imagen en ese runner:
+`sha256:8e93ded6572eec55edc7a906d86063fcf1fa3703255ab6797ee2f7fa233c6c10`.
+Es el ID de esa construccion, no un digest de registro: no se publico ni
+conservo la imagen fuera del runner efimero. Railway debera reconstruir
+el mismo codigo y comprobarse de nuevo en el entorno final.
+
+El commit posterior que registra esta evidencia solo cambia documentacion;
+no modifica el codigo validado y omite otra ejecucion de CI.
 Las ejecuciones con runner estandar del repositorio publico son gratuitas
 segun [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 No se usan larger runners, artefactos persistentes ni caches remotos.
@@ -69,7 +87,6 @@ autenticacion con cuentas reales, persistencia o restauracion del servicio final
 
 ## Pendientes antes de publicar
 
-- Registrar resultado del build y arranque sintetico en Linux.
 - Restauracion descartable de PostgreSQL/Auth y originales desde copia externa.
 - Prueba del maximo de 64 MiB y concurrencia en el alojamiento.
 - Configurar volumen, dominio HTTPS, proxies y URLs Auth al autorizar el servicio.

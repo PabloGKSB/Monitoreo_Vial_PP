@@ -43,7 +43,8 @@ Dockerfile; los ajustes del servicio se registraran al conectarlo.
    Linux preparado en `.github/workflows/build-container.yml`, manual o al
    abrir/actualizar un pull request hacia main. Incluye un arranque aislado
    sin red con datos sinteticos; no acredita la configuracion de produccion.
-   Consultar VALIDACION.md para el resultado de ejecucion. Validar arranque
+   La [primera construccion y prueba aislada](https://github.com/PabloGKSB/Monitoreo_Vial_PP/actions/runs/39154037300)
+   aprobo el 18 de octubre; detalle en VALIDACION.md. Validar arranque
    y healthcheck con la imagen antes de exponer un dominio.
 3. Adjuntar un volumen en `/data`, con capacidad medida segun uso y alertas.
    Configurar `VIAL_API_STORAGE=/data/archives` y respaldos temporales en
