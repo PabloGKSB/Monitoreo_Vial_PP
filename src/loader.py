@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -75,6 +76,7 @@ class TripData:
     sensors: dict[str, pd.DataFrame]
     source_files: dict[str, str]
     warnings: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
 
     @property
     def available_sensors(self) -> tuple[str, ...]:
@@ -180,6 +182,18 @@ def load_trip(zip_path: str | Path, *, require_minimum: bool = True) -> TripData
     warnings: list[str] = []
     try:
         with ZipFile(path) as archive:
+            manifests = [n for n in archive.namelist() if PurePosixPath(n).name == "metadata.json"]
+            if manifests:
+                if len(manifests) != 1:
+                    raise TripLoadError("Multiple metadata.json files")
+                from .native_loader import load_native_trip
+                try:
+                    metadata = json.loads(archive.read(manifests[0]))
+                except (ValueError, UnicodeDecodeError) as exc:
+                    raise TripLoadError("Invalid metadata.json") from exc
+                return load_native_trip(archive, path, manifests[0], metadata, require_minimum)
+            if any(PurePosixPath(n).name == "linear_acceleration.csv" for n in archive.namelist()):
+                raise TripLoadError("Native capture requires metadata.json; refusing legacy clock fallback")
             for info in archive.infolist():
                 if info.is_dir() or PurePosixPath(info.filename).suffix.lower() != ".csv":
                     continue

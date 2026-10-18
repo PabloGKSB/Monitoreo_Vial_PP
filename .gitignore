@@ -16,3 +16,26 @@ outputs/maps/*
 outputs/plots/*
 !outputs/plots/.gitkeep
 outputs/*.log
+.api_local/
+.env
+.env.*
+!.env.example
+outputs/uv-cache/
+web/node_modules/
+web/dist/
+!deploy/.env.production.example
+# Local/private artifacts never belong in a deployment commit.
+*.zip
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.db
+*.sqlite
+*.sqlite3
+/capturas/
+/docs/etapa2/entrega/
+/[Dd]ata/

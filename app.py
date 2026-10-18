@@ -124,19 +124,27 @@ def main() -> None:
         return
 
     summary = result.summary
+    native_inspection = summary.get("analysis_mode") == "native_inspection"
+    detection_evaluated = summary.get("detection_status") == "EVALUATED"
+    for warning in result.trip.warnings:
+        st.warning(warning)
     st.subheader(result.trip.trip_id.replace("_", " "))
     cols = st.columns(5)
     cols[0].metric("Duracion", _duration_text(float(summary["duration_seconds"])))
-    cols[1].metric("Distancia", f"{summary['distance_km']:.2f} km")
+    cols[1].metric("Distancia GPS observada", f"{summary['distance_km']:.2f} km")
     cols[2].metric("Velocidad media", f"{summary['mean_speed_kmh']:.1f} km/h")
-    cols[3].metric("Eventos", summary["event_count"])
+    cols[3].metric("Detecciones", summary["event_count"] if detection_evaluated else "No evaluadas")
     cols[4].metric("Calidad", summary["quality_status"])
+    if summary.get("detection_status") == "BLOCKED_INVALID":
+        st.error("Datos requeridos invalidos: deteccion bloqueada. Trayecto y calidad disponibles para revision.")
+    elif not detection_evaluated and not native_inspection:
+        st.warning("No hay suficientes ventanas continuas con cobertura GPS para evaluar detecciones.")
     st.markdown('<div class="status-note">Indices de severidad y estado vial experimentales; aun no constituyen una escala validada.</div>', unsafe_allow_html=True)
 
     overview_tab, quality_tab, events_tab, signal_tab = st.tabs(["Mapa", "Calidad", "Eventos", "Senal"])
     with overview_tab:
         st_folium(build_trip_map(result), use_container_width=True, height=620, returned_objects=[])
-        st.caption("Azul: trayectoria GPS. Verde/amarillo/rojo: segmentos BUENO/REGULAR/MALO. Puntos: anomalias.")
+        st.caption("Trayectoria GPS observada; intervalos mayores de 2 s separados, sin sumar distancia entre sus extremos." if native_inspection else "Azul: trayectoria GPS. Verde/amarillo/rojo: segmentos BUENO/REGULAR/MALO. Puntos: anomalias.")
 
     with quality_tab:
         st.dataframe(_quality_table(result), width="stretch", hide_index=True)
@@ -150,6 +158,9 @@ def main() -> None:
         st.caption(f"Gravedad: {result.preprocessing_info.gravity_compensation}. Frecuencia usada: {result.preprocessing_info.sampling_hz:.2f} Hz.")
 
     with events_tab:
+        if "annotation" in result.trip.sensors:
+            st.subheader("Anotaciones registradas")
+            st.dataframe(result.trip.sensors["annotation"], hide_index=True)
         severities = st.multiselect("Severidad", ["LEVE", "MEDIA", "ALTA"], default=["LEVE", "MEDIA", "ALTA"])
         table = result.events[result.events["severity"].isin(severities)].copy()
         display_columns = ["event_id", "timestamp", "severity", "event_score", "speed_kmh", "gps_status"]
@@ -157,7 +168,7 @@ def main() -> None:
 
     with signal_tab:
         if result.events.empty:
-            st.info("No hay eventos para inspeccionar con los parametros actuales.")
+            st.info("Deteccion y procesamiento de senal nativa pendientes de validacion." if native_inspection else ("Deteccion no evaluada; revisar calidad y cobertura." if not detection_evaluated else "No hay eventos para inspeccionar con los parametros actuales."))
         else:
             event_id = st.selectbox("Evento", result.events["event_id"].tolist())
             event = result.events[result.events["event_id"] == event_id].iloc[0]

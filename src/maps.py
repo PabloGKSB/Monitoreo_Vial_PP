@@ -22,9 +22,13 @@ def build_trip_map(result: AnalysisResult) -> folium.Map:
     center = [float(gps["latitude"].median()), float(gps["longitude"].median())]
     trip_map = folium.Map(location=center, zoom_start=14, tiles="OpenStreetMap", control_scale=True)
     route_layer = folium.FeatureGroup(name="Trayectoria GPS", show=True)
-    folium.PolyLine(
-        gps[["latitude", "longitude"]].values.tolist(), color="#315d86", weight=3, opacity=0.65
-    ).add_to(route_layer)
+    parts = gps["route_part"] if "route_part" in gps else (gps.seconds_elapsed.diff() > 2.0).cumsum()
+    for _, part in gps.groupby(parts):
+        if len(part) > 1:
+            folium.PolyLine(part[["latitude", "longitude"]].values.tolist(),
+                            color="#315d86", weight=3, opacity=0.8).add_to(route_layer)
+    for label, row in (("Inicio GPS", gps.iloc[0]), ("Fin GPS", gps.iloc[-1])):
+        folium.Marker([row.latitude, row.longitude], tooltip=label).add_to(route_layer)
     route_layer.add_to(trip_map)
 
     segment_layer = folium.FeatureGroup(name="Estado experimental", show=True)
