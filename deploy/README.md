@@ -13,6 +13,9 @@ esta en [OPERACION.md](OPERACION.md). Ninguna propuesta equivale a un recurso
 provisionado, una suscripcion aprobada o una validacion completada.
 El resultado actual de las comprobaciones se registra en
 [VALIDACION.md](VALIDACION.md).
+El incremento de restauracion y su ensayo descartable se documentan en
+[RECUPERACION.md](RECUPERACION.md); el job PostgreSQL/PostGIS nuevo aun no
+se ha ejecutado.
 
 ## Paquete disponible
 

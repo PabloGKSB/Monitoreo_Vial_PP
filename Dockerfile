@@ -15,7 +15,7 @@ RUN python -m pip install --no-cache-dir --require-hashes -r requirements-server
     && mkdir -p /data/archives && chown -R vial:vial /data
 COPY src ./src
 COPY run_server.py ./
-COPY scripts/backup_central.py scripts/retain_archives.py ./scripts/
+COPY scripts/backup_central.py scripts/retain_archives.py scripts/restore_application.py ./scripts/
 COPY deploy/prod-ca-2021.crt ./deploy/prod-ca-2021.crt
 COPY --from=client /build/web/dist ./web/dist
 USER 10001:10001

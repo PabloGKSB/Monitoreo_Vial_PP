@@ -87,6 +87,12 @@ autenticacion con cuentas reales, persistencia o restauracion del servicio final
 
 ## Pendientes antes de publicar
 
+Incremento local de recuperacion: restaurador descartable, pruebas y job de
+CI PostgreSQL/PostGIS preparados. Ver [RECUPERACION.md](RECUPERACION.md).
+120 pruebas locales aprobaron y el respaldo local existente se recupero en
+SQLite aislado, sin cambios en produccion. El job nuevo todavia no se ejecuto;
+el resultado Docker anterior no valida este codigo adicional.
+
 - Restauracion descartable de PostgreSQL/Auth y originales desde copia externa.
 - Prueba del maximo de 64 MiB y concurrencia en el alojamiento.
 - Configurar volumen, dominio HTTPS, proxies y URLs Auth al autorizar el servicio.

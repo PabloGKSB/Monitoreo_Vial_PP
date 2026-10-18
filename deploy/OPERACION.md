@@ -93,10 +93,12 @@ Recuperar Auth con un mecanismo compatible y comprobar que issuer e identidades
 se corresponden con vial.users. No basta con crear usuarios con otros UUID.
 Autenticar las dos cuentas y comprobar aislamiento y descargas.
 
-Todavia no existe un importador general de restauracion de este snapshot ni
-un mecanismo de exportacion/cifrado automatizado: desarrollar y probar ambos
-es trabajo posterior. No activar `VIAL_PERSISTENT_STORAGE_CONFIRMED=1` por
-el solo hecho de tener este documento.
+Ya existe un restaurador limitado a destinos descartables y probado localmente;
+el ensayo PostgreSQL/PostGIS nuevo sigue pendiente de CI. Ver
+[RECUPERACION.md](RECUPERACION.md) para alcance, restricciones y resultados.
+No es un restaurador general para proyectos Supabase. El mecanismo de
+transferencia/cifrado externo sigue pendiente. No activar
+`VIAL_PERSISTENT_STORAGE_CONFIRMED=1` por el solo hecho de tener este documento.
 
 Los [backups de volumen Railway](https://docs.railway.com/volumes/backups)
 pueden complementar la copia externa. Documentan retenciones de 6 dias

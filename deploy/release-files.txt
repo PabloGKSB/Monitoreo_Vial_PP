@@ -9,6 +9,7 @@ deploy/OPERACION.md
 deploy/PREPARACION.md
 deploy/prod-ca-2021.crt
 deploy/README.md
+deploy/RECUPERACION.md
 deploy/VALIDACION.md
 deploy/release-files.txt
 Dockerfile
@@ -29,6 +30,8 @@ pytest.ini
 README.md
 requirements.txt
 requirements-api.txt
+requirements-maintenance.in
+requirements-maintenance.lock
 requirements-pilot.txt
 requirements-server.in
 requirements-server.lock
@@ -39,12 +42,14 @@ run_tests.py
 scripts/backup_central.py
 scripts/check_login_feedback.py
 scripts/check_container_image.py
+scripts/check_postgres_recovery.py
 scripts/check_deployment_database.py
 scripts/check_web_client.py
 scripts/prepare_production_env.py
 scripts/prepare_release.py
 scripts/register_test_accounts.py
 scripts/retain_archives.py
+scripts/restore_application.py
 scripts/validate_accounts.py
 src/__init__.py
 src/analyzer.py
@@ -97,6 +102,7 @@ tests/test_postgis_live.py
 tests/test_processing_policy.py
 tests/test_quality.py
 tests/test_retention.py
+tests/test_restore.py
 tests/test_roadsens.py
 web/build.mjs
 web/client.js

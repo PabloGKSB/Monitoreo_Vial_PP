@@ -18,6 +18,7 @@ src/**/__pycache__/
 !scripts/
 !scripts/backup_central.py
 !scripts/retain_archives.py
+!scripts/restore_application.py
 # Final exclusions also apply below any permitted source directory.
 **/.env
 **/.env.*
