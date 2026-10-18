@@ -9,11 +9,15 @@ Fecha: 2026-10-18. No hay publicacion en Railway ni cambios del plan Hobby.
 | Python: .venv/Scripts/python.exe run_tests.py | 106 aprobadas, 8 omitidas; 1 aviso de deprecacion TestClient/httpx |
 | Cliente: npm --prefix web test | 7 aprobadas |
 | Cliente: npm --prefix web run build | Aprobado; el sandbox requirio ejecutar esbuild con acceso a carpetas padre |
+| Backend PostgreSQL real: tests/test_backend_postgres_live.py | 7 aprobadas en 38,90 s; transacciones revertidas, sin migraciones ni altas Auth |
 | Paquete de fuente y patrones de secretos | Preparado sin variables privadas; los ZIP RAW se conservan fuera del indice |
 | Acceso a GitHub | Repositorio publico, permisos de escritura y push dry-run comprobados |
 
-Las pruebas omitidas no acreditan PostgreSQL/PostGIS real ni todo el piloto
-opcional. No se ejecutaron las migraciones de pruebas contra la base activa.
+De las ocho omisiones iniciales, las siete de backend se ejecutaron despues
+con el DSN optativo del rol limitado y aprobaron. La prueba de migraciones
+PostGIS sigue pendiente de una base descartable; no se ejecutaron las
+migraciones de pruebas contra la base activa. Este resultado no acredita
+todo el piloto opcional ni una restauracion.
 El aviso de TestClient no afecto los resultados y no se cambiaron dependencias.
 
 ## Base real, solo lectura
@@ -28,11 +32,13 @@ Consultas dentro de transaccion READ ONLY, seguida de rollback.
 | Rol backend | vial_backend sin superuser, bypassrls, createrole ni createdb |
 | Verificacion CA/hostname | sslmode=verify-full con CA existente |
 | TLS cliente a pooler | true |
-| TLS pooler a PostgreSQL, pg_stat_ssl | false; bloquea produccion |
+| TLS pooler a PostgreSQL, pg_stat_ssl | true, confirmado tras el cambio del usuario |
 | Acceso a jobs y geom de observations | Correcto, sin leer datos de usuarios |
 
-El usuario indico que activara Enforce SSL en el dashboard y avisara.
-No se considera aplicado hasta su aviso y una reconexion que compruebe ssl=true.
+El usuario activo Enforce SSL en el dashboard y aviso. Se reconecto con el
+rol backend y la comprobacion devolvio `ready=true`: ambos tramos TLS,
+verify-full, rol limitado y esquema accesible. Ese resultado corresponde
+solo a la preparacion de la conexion, no a toda la aplicacion en produccion.
 No se cambio la configuracion de la base desde estas herramientas.
 Referencia: [SSL enforcement](https://supabase.com/docs/guides/platform/ssl-enforcement).
 
@@ -51,7 +57,9 @@ Comprueba Python 3.12, ausencia de Node y archivos privados, cliente compilado,
 CA publica y arranque de la API con SQLite sintetico: /health 200, frontend
 200 y recurso privado sin token 401. La imagen no se publica en un registro.
 
-Ejecucion remota pendiente de registrar al terminar GitHub Actions.
+Ejecucion remota pendiente: la rama de validacion esta preparada localmente,
+pero la subida al repositorio publico requiere autorizacion explicita sobre
+el contenido. No se subio ni se ejecuto GitHub Actions.
 Las ejecuciones con runner estandar del repositorio publico son gratuitas
 segun [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 No se usan larger runners, artefactos persistentes ni caches remotos.
@@ -61,7 +69,6 @@ autenticacion con cuentas reales, persistencia o restauracion del servicio final
 
 ## Pendientes antes de publicar
 
-- Confirmar TLS pooler/PostgreSQL despues del cambio del usuario.
 - Registrar resultado del build y arranque sintetico en Linux.
 - Restauracion descartable de PostgreSQL/Auth y originales desde copia externa.
 - Prueba del maximo de 64 MiB y concurrencia en el alojamiento.

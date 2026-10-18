@@ -69,12 +69,13 @@ Dockerfile; los ajustes del servicio se registraran al conectarlo.
 
 ## Requisitos externos pendientes
 
-**TLS upstream:** se observo `ssl=false` en `pg_stat_ssl` tras llegar por el
-pooler. Activar/verificar [SSL enforcement](https://supabase.com/docs/guides/platform/ssl-enforcement)
-desde [los ajustes del proyecto](https://supabase.com/dashboard/project/eqrkaypxpvjwenlclyab/database/settings).
-Ese cambio puede reiniciar brevemente la base; no se realizo con los tools
-disponibles. Despues, reconectar y comprobar `ssl=true` sin quitar verify-full.
-El preflight impide el despliegue mientras falte.
+**TLS upstream resuelto el 18 de octubre:** el usuario activo
+[SSL enforcement](https://supabase.com/docs/guides/platform/ssl-enforcement)
+desde los ajustes del proyecto. Una conexion nueva con el rol `vial_backend`
+confirmo TLS cliente/pooler y `ssl=true` en `pg_stat_ssl` para el tramo
+pooler/PostgreSQL, conservando `verify-full` y la CA. La consulta fue de solo
+lectura. Este requisito queda aprobado; no acredita los demas controles del
+preflight ni la aceptacion completa del despliegue.
 
 **Aviso Auth real:** el asesor devuelve WARN por proteccion contra contrasenas
 filtradas deshabilitada. El plan actual es Free y esta funcion requiere
